@@ -19,8 +19,14 @@
 //   ban <name>        AccessControl.KickBan (kick + IP ban in XIII.ini)
 //   tell <name>\t<text>  private message to one player (ClientMessage);
 //                     without a tab the name is the first word
-//   poll              ok + the queued admin chat commands, one
-//                     "<name>\t<command>" line each (TwoHoursChat), then clears
+//   poll              ok + the queued chat commands and events, one
+//                     "<name>\t<a|p|s>\t<command>" line each (TwoHoursChat),
+//                     then clears; "\ts\t#matchend" when a match ends
+//   bots <n> <skill>  bots fill the server to n players (0 = none), skill 0-3;
+//                     saved in XIII.ini, applied at every match start
+//   labhold on|off    LAB ONLY (LabInject=True): keep a throwaway player
+//                     controller on the server so a match starts without a
+//                     client
 //   inject admin|player <text>   LAB ONLY, refused unless LabInject=True:
 //                     a throwaway controller of that kind "says" <text>, so a
 //                     lab can drive the chat path without a game client
@@ -42,7 +48,11 @@ class TwoHoursCtl extends UdpLink config;
 var config int CtlPort;
 var config string CtlKey;
 var config bool LabInject;
+var config int BotTarget;
+var config int BotSkill;
 var TwoHoursChat Chat;
+var bool bSawMatchOver;
+var PlayerController LabHeld;
 
 function PostBeginPlay()
 {
@@ -65,12 +75,95 @@ function PostBeginPlay()
 	}
 	Log("TwoHoursCtl: listening on UDP port" @ Bound);
 	InstallChat();
+	ApplyBots();
 	SetTimer(1.0, true);
 }
 
 function Timer()
 {
 	InstallChat();
+	WatchMatch();
+	TrimBots();
+}
+
+// Queue "#matchend" once when the game enters MatchOver (XIIIMPGameInfo
+// CheckEndGame). Without us the game restarts the match on the same map.
+function WatchMatch()
+{
+	if (Level.Game == None)
+		return;
+	if (Level.Game.IsInState('MatchOver'))
+	{
+		if (!bSawMatchOver)
+		{
+			bSawMatchOver = true;
+			Log("TwoHoursCtl: match over");
+			if (Chat != None)
+				Chat.Push(Chr(9) $ "s" $ Chr(9) $ "#matchend");
+		}
+	}
+	else
+		bSawMatchOver = false;
+}
+
+// XIIIMPGameInfo.StartMatch adds Level.BotNumber bots (capped at
+// Level.IdealPlayerCount minus the humans) when no bot exists yet. Stock XIII
+// does that only offline (NM_StandAlone); lib/botpatch.py lets a dedicated
+// server do it too.
+function ApplyBots()
+{
+	local int i;
+
+	BotTarget = Clamp(BotTarget, 0, 16);
+	BotSkill = Clamp(BotSkill, 0, 3);
+	Level.BotNumber = Min(BotTarget, 8);
+	if (BotTarget > 0)
+		Level.IdealPlayerCount = BotTarget;
+	for (i = 0; i < 8; i++)
+	{
+		Level.BotLevel[i] = BotSkill;
+		Level.BotTeam[i] = i % 2;
+	}
+}
+
+function int CountHumans()
+{
+	local Controller C;
+	local int N;
+
+	for (C = Level.ControllerList; C != None; C = C.NextController)
+		if (PlayerController(C) != None && NetConnection(PlayerController(C).Player) != None)
+			N++;
+	return N;
+}
+
+function int CountBots()
+{
+	local Controller C;
+	local int N;
+
+	for (C = Level.ControllerList; C != None; C = C.NextController)
+		if (C.IsA('BotController'))
+			N++;
+	return N;
+}
+
+// Bots leave as humans join: never more than BotTarget players in total.
+function TrimBots()
+{
+	local Controller C;
+
+	if (CountBots() == 0 || CountHumans() + CountBots() <= BotTarget)
+		return;
+	for (C = Level.ControllerList; C != None; C = C.NextController)
+		if (C.IsA('BotController'))
+			break;
+	if (C == None)
+		return;
+	Log("TwoHoursCtl: bot leaves" @ C);
+	if (C.Pawn != None)
+		C.Pawn.Destroy();
+	C.Destroy();
 }
 
 // Make TwoHoursChat the game's BroadcastHandler, keeping the old one's state.
@@ -112,6 +205,33 @@ function PlayerController FindPlayer(string Who)
 			return P;
 	}
 	return None;
+}
+
+// LAB ONLY (LabInject=True): keep (or drop) a player controller with no
+// client, so PendingMatch sees a player and starts a match.
+function string LabHold(bool bOn)
+{
+	local class<PlayerController> PC;
+
+	if (!bOn)
+	{
+		if (LabHeld != None)
+			LabHeld.Destroy();
+		LabHeld = None;
+		return "ok";
+	}
+	if (LabHeld != None)
+		return "ok";
+	PC = class<PlayerController>(DynamicLoadObject("XIIIMP.XIIIMPPlayerController", class'Class'));
+	if (PC == None)
+		return "error no controller class";
+	LabHeld = Spawn(PC);
+	if (LabHeld == None)
+		return "error spawn failed";
+	if (LabHeld.PlayerReplicationInfo != None)
+		LabHeld.PlayerReplicationInfo.PlayerName = "labhold";
+	Log("TwoHoursCtl: LAB hold" @ LabHeld);
+	return "ok";
 }
 
 // LAB ONLY (LabInject=True): a throwaway controller of class Kind says Msg.
@@ -185,6 +305,10 @@ function string StatusText()
 	S = S $ Chr(10) $ "game=" $ string(Level.Game.Class);
 	S = S $ Chr(10) $ "url=" $ Redact(Level.GetLocalURL());
 	S = S $ Chr(10) $ "max=" $ Level.Game.MaxPlayers;
+	S = S $ Chr(10) $ "state=" $ Level.Game.GetStateName();
+	S = S $ Chr(10) $ "bots=" $ CountBots();
+	S = S $ Chr(10) $ "bottarget=" $ BotTarget;
+	S = S $ Chr(10) $ "botskill=" $ BotSkill;
 	for (C = Level.ControllerList; C != None; C = C.NextController)
 	{
 		P = PlayerController(C);
@@ -277,6 +401,26 @@ event ReceivedText(IpAddr Addr, string Text)
 			SendText(Addr, Id @ "ok");
 		else
 			SendText(Addr, Id @ "ok" $ Chat.TakeQueue());
+	}
+	else if (Cmd == "BOTS")
+	{
+		BotTarget = int(NextWord(Rest));
+		if (Rest != "")
+			BotSkill = int(NextWord(Rest));
+		ApplyBots();
+		SaveConfig();
+		TrimBots();
+		Log("TwoHoursCtl: bots fill to" @ BotTarget @ "skill" @ BotSkill);
+		SendText(Addr, Id @ "ok");
+	}
+	else if (Cmd == "LABHOLD")
+	{
+		if (!LabInject)
+		{
+			SendText(Addr, Id @ "error labhold is off (lab only)");
+			return;
+		}
+		SendText(Addr, Id @ LabHold(Rest ~= "on"));
 	}
 	else if (Cmd == "INJECT")
 	{

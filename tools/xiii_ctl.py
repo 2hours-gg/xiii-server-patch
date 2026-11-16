@@ -11,10 +11,14 @@ Run it ON the server machine (the actor ignores datagrams that are not from
   python3 xiii_ctl.py --key <CtlKey> ban SomePlayer
   python3 xiii_ctl.py --key <CtlKey> tell "Some Player" "only you see this"
   python3 xiii_ctl.py --key <CtlKey> poll
+  python3 xiii_ctl.py --key <CtlKey> bots 6 2
 
 `tell` sends "tell <name><TAB><text>", so a name may hold spaces. `poll` prints
-the admin chat commands queued since the last poll, one "<name><TAB><command>"
-line each, and empties the queue.
+the chat commands queued since the last poll, one "<name><TAB><a|p><TAB><command>"
+line each (a = admin, p = player), plus "<TAB>s<TAB>#matchend" when a match
+ends, and empties the queue. `bots <n> <skill>` makes bots fill the server to n
+players (0 = off) at skill 0-3, from the next match start; it needs
+patch/xiii_bot_patch.py.
 
 Wire format, one UDP datagram each way:
   request  "<key> <id> <command> [args]"
@@ -53,12 +57,12 @@ def build_command(words: list) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="TwoHoursCtl client (status, travel, say, kick, ban, tell, poll)")
+        description="TwoHoursCtl client (status, travel, say, kick, ban, tell, poll, bots)")
     ap.add_argument("--key", required=True, help="CtlKey from XIII.ini")
     ap.add_argument("--port", type=int, default=7098, help="CtlPort (default 7098)")
     ap.add_argument("command", nargs="+",
                     help="status | travel <url> | say <text> | kick <name> | ban <name> | "
-                         "tell <name> <text> | poll")
+                         "tell <name> <text> | poll | bots <n> <skill>")
     a = ap.parse_args()
     try:
         print(request(a.key, build_command(a.command), port=a.port))

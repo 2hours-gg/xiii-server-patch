@@ -1,19 +1,20 @@
 # xiii-server-mapchange
 
-Live map and mode changes for the **XIII (2003) dedicated server**.
+Live map and mode changes, map rotation, map voting and bots for the **XIII (2003) dedicated server**.
 
 The stock XIII server cannot change map while it runs. It has no remote console. Typing into its window does nothing. If a map change is forced anyway, the server crashes. This repository fixes both problems:
 
 | Part | What it is | Size |
 |---|---|---|
 | [`patch/xiii_engine_patch.py`](patch/xiii_engine_patch.py) | Patches `Engine.dll` so a map change no longer crashes the server | 7 bytes changed |
-| [`TwoHoursCtl/`](TwoHoursCtl/Classes/) | A small server add-on in UnrealScript. It accepts local commands (`status`, `travel`, `say`, `kick`, `ban`, `tell`, `poll`) and catches admin chat commands such as `!map DM_Banque` | 19 KB `.u` |
+| [`patch/xiii_bot_patch.py`](patch/xiii_bot_patch.py) | Patches `XIIIMP.u` and `XIIIMP.dll` so the dedicated server can run bots | 1 byte + 32 bytes |
+| [`TwoHoursCtl/`](TwoHoursCtl/Classes/) | A small server add-on in UnrealScript. It accepts local commands (`status`, `travel`, `say`, `kick`, `ban`, `tell`, `poll`, `bots`), catches chat commands such as `!map DM_Banque` or `!vote DM_Pal`, and reports the end of each match | 25 KB `.u` |
 | [`tools/xiii_ctl.py`](tools/xiii_ctl.py) | A command-line client for the add-on | |
 | [`build/`](build/) | How the add-on is compiled, since the server files cannot compile UnrealScript | |
 
 This is the code behind the web console of the XIII servers on **[2hours.gg/xiii](https://2hours.gg/xiii)**. There, the map and mode change from a browser while players stay connected.
 
-No Ubisoft files are in this repository. The patcher edits a copy of `Engine.dll` that you already have.
+No Ubisoft files are in this repository. The patchers edit copies of `Engine.dll`, `XIIIMP.u` and `XIIIMP.dll` that you already have.
 
 ---
 
@@ -133,8 +134,9 @@ In XIII, chat is the only text a player can send to the server:
 
 - `TwoHoursChat` (in the same package) extends `BroadcastHandler`. `TwoHoursCtl` puts it in place of the game's handler. It keeps the old handler's settings and checks again every second, so it is also in place after every map change.
 - A chat line that starts with `!` is a command. It is never shown to other players.
-- From an admin (the game makes admins an `XIIIMP.XIIIAdmin`), the command is queued as `<player name><TAB><command without !>`. The queue holds 8 commands.
-- From anyone else, the sender gets a private reply: `Admin only. Join with ?Password=<admin password>.`
+- The command is queued as `<player name><TAB><flag><TAB><command without !>`. The flag is `a` for an admin (the game makes admins an `XIIIMP.XIIIAdmin`) and `p` for anyone else. The queue holds 16 lines.
+- The poller decides who may run what. 2hours.gg lets everyone vote and read lists, and only admins change maps, kick or set bots. Others get a private `Admin only. Join with ?Password=<admin password>.`
+- The add-on also queues `<TAB>s<TAB>#matchend` when a match ends, see [Map rotation](#map-rotation).
 - Every other line is normal chat.
 
 ### Running the queued commands
@@ -149,8 +151,9 @@ python3 tools/xiii_ctl.py --key <CtlKey> poll
 
 ```
 ok
-Boss	map DM_Banque ctf
-Boss	players
+Boss	a	map DM_Banque ctf
+Ann	p	vote DM_Pal
+	s	#matchend
 ```
 
 `poll` empties the queue. A poller can then call `travel`, `kick`, `ban`, `tell` or `say` with the same key.
@@ -164,13 +167,69 @@ The commands 2hours.gg runs (any case, map names in any case):
 | `!restart` | Reload the current map and mode |
 | `!maps [mode]`, `!modes`, `!players` | Lists, sent privately |
 | `!kick <name>`, `!ban <name>` | Kick, or kick and ban the IP |
+| `!next`, `!rotation on\|off` | Skip to the next map, turn the rotation on or off |
+| `!bots <n> [skill]` | Bots fill the server to n players |
+| `!vote <map>`, `!vote <mode> <map>`, `!votes`, `!rotation` | Everyone: vote, show the votes, show the rotation |
 | `!help` | The list above |
 
-The admin gets the answer privately. A map change is also announced to everyone with `say`. The 2-live-changes limit still applies: the third change restarts the server.
+Everyone may use the `!vote` row, `!maps`, `!modes`, `!players` and `!help`; the rest is for admins. The answer is private. A map change is also announced to everyone with `say`. The 2-live-changes limit still applies: the third change restarts the server.
 
 ### Testing without a game client
 
-`LabInject=True` in `[TwoHoursCtl.TwoHoursCtl]` enables one more command: `inject admin|player <text>`. It spawns a temporary admin or player that "says" the text through `Level.Game.Broadcast`, then removes it. It is meant for test servers only and is off by default.
+`LabInject=True` in `[TwoHoursCtl.TwoHoursCtl]` enables two more commands, for test servers only (off by default):
+
+- `inject admin|player <text>` spawns a temporary admin or player that "says" the text through `Level.Game.Broadcast`, then removes it.
+- `labhold on|off` keeps a player controller with no client on the server. A match only starts when a player is present, so this lets a match (and bots) start without a game client.
+
+---
+
+## Map rotation
+
+Stock XIII has no map rotation. When a match ends, `XIIIMPGameInfo` enters the state `MatchOver`. About 7 seconds later it goes back to `PendingMatch` and plays the **same** map again.
+
+- `TwoHoursCtl` checks every second whether `Level.Game.IsInState('MatchOver')`. At each match end it queues `#matchend` once.
+- The poller then changes map. 2hours.gg picks the most voted map, else the next map of the rotation: the maps of the current mode, in a fixed order, starting after the current map. It says `Next map: <map>` with `say`, waits 3 seconds, and sends `travel`.
+- The usual limit applies: the 3rd change in one server process is a restart (fine at the end of a match).
+- With rotation off, nothing happens and XIII plays the same map again.
+
+## Map voting
+
+Voting is chat only. Players do not need any extra file.
+
+- `!vote <map>` votes for a map of the current mode. `!vote <mode> <map>` votes for another mode. A new vote replaces the old one.
+- `!votes` shows the count and how many votes are needed.
+- When more than half of the connected players vote for the same map, it changes at once. A vote can change the map at most once every 3 minutes; an admin's `!map` is not limited.
+- At the end of a match the most voted map wins over the rotation.
+- Votes reset on every map change. A player who leaves loses their vote.
+
+The add-on only queues the votes. The counting is the poller's job (2hours.gg's is in Python).
+
+## Bots
+
+XIII has bots (`BotController` and its team, CTF, Sabotage and Hunt variants in `XIIIMP.u`), but stock XIII uses them only offline. On a dedicated server they never appear, and forcing them in crashes the server. [`patch/xiii_bot_patch.py`](patch/xiii_bot_patch.py) fixes both:
+
+```
+python3 patch/xiii_bot_patch.py check  <XIII>/System
+python3 patch/xiii_bot_patch.py apply  <XIII>/System
+```
+
+1. **`XIIIMP.u`, 1 byte.** `XIIIMPGameInfo.StartMatch` adds `Level.BotNumber` bots only `if ( !Level.bLonePlayer && Level.NetMode == NM_StandAlone )`. The comparison is compiled bytecode: the int `==` operator, native 154, the byte `9A` at file offset 98449. It becomes native 155, `!=`. A dedicated server now adds the bots. Clients use their own `XIIIMP.u`, so nothing changes for them.
+2. **`XIIIMP.dll`, 32 bytes.** With only the first fix, the first bot crashed the server:
+
+   ```
+   Critical: Failed to find function None in BotController DM_Amos.BotController2
+   Critical: ABotController::execAddOrder <- UObject::ProcessEvent <- ... PendingMatch.Timer ...
+   ```
+
+   The bot code in `XIIIMP.dll` calls script functions by name (`AddDefaultOrders`, `LogOrderList`, ...). It fills those names in its exported function `XIIIMPInitNativePackage()`. The game client `XIII.exe` imports and calls it. `UCC.exe` never does, so on a server the names stay `None`. The patch makes the DLL's `DllMain` call `XIIIMPInitNativePackage` when the DLL loads, using the padding after `DllMain` (see the disassembly in the script). It is the same gap as the map change crash: code that assumed the game client.
+
+Then `bots <n> <skill>` (or `BotTarget`/`BotSkill` in `[TwoHoursCtl.TwoHoursCtl]`) sets `Level.BotNumber`, `Level.IdealPlayerCount`, `Level.BotLevel` and `Level.BotTeam`:
+
+- Bots fill the server to n players (XIII adds at most 8) at the next match start, which needs one human. Skill goes from 0 to 3.
+- While players plus bots are more than n, one bot leaves every second. `bots 0` removes them all.
+- The setting is saved in `XIII.ini`, so it survives map changes and restarts.
+
+Tested on a lab server: 3 bots played whole matches in all 6 modes, the next match started with them again, and the server stayed up for 10 minutes with no error. How they feel against real players is not tested yet.
 
 ---
 
@@ -185,7 +244,11 @@ All hashes are sha256.
 | `System/Engine.dll` (original) | 2433024 | `810b0c9600d06e104104f1dbf04d7989584b6d931d75e4a5ff933be598cdafdc` | PE32 i386, image base `0x10300000`, linked 2003-10-21 18:26:41 UTC |
 | `System/Engine.dll` (patched) | 2433024 | `ff6183bfdbb908a0005a8dbecc7ce9fe7de11c92c8dc321780ca7fc1aa02e864` | |
 | `System/UCC.exe` | 61440 | `2909a98bd77ddf66b688f4d4f5ffaccfbaf269e72a7feb3e282c072b964f2bf9` | Unchanged |
-| `dist/TwoHoursCtl.u` | 19048 | `b8973532b6d315d40f78ca6b29634f8a7ffda9ef2ba500454bfe1a3ca1f76fd8` | Built from `TwoHoursCtl/Classes/TwoHoursCtl.uc` and `TwoHoursChat.uc` |
+| `System/XIIIMP.u` (original) | 941397 | `6f5f07f13b5fadd61abfaf9622e8dd15f91675f36a6525d7bd14de715a2c3450` | Server build, carries its UnrealScript source text |
+| `System/XIIIMP.u` (patched) | 941397 | `d4771d0002c4a324bfef6f8891958e2a3fb2c5d17b38294c2673493b69ac5e1e` | |
+| `System/XIIIMP.dll` (original) | 53248 | `a504c2e3ccbe5fbfeb92a8b33c1caa4a5490172a2c22e77a80dbbbd3fec04a9b` | Image base `0x11D00000` |
+| `System/XIIIMP.dll` (patched) | 53248 | `58ca02dc8036b2390b655b917c9cdcf847086cadddda0026b1a8a1e6fe4ef35e` | |
+| `dist/TwoHoursCtl.u` | 25615 | `65dafa6384134f4e1b94aee878fdcb87481f0a6415f661b1e90e558d61609dfc` | Built from `TwoHoursCtl/Classes/TwoHoursCtl.uc` and `TwoHoursChat.uc` |
 | `Classic_XIII___Patch_by_Arthur_v1.4.2.1_2019-09-04.exe` | | `4cd267d92353ffd99894d65794fc8f50b8a387476b2cac3dfd42d2f78866d0c7` | Build-time only (compiler toolchain) |
 
 In `Engine.dll`, the `.text` section has the same file offset and virtual address (`0x1000`). So a file offset `X` in the code is the address `0x10300000 + X` in a debugger.
@@ -235,7 +298,7 @@ Unreal servers load extra actors listed as `ServerActors=` in the ini. The engin
 - Even there, `IpDrv.u` is stripped, and `UdpLink` lives in `IpDrv.u`. So [`build/stubs/`](build/stubs/) holds declaration-only stand-ins (the native function signatures, no logic) for its 9 classes.
 - [`build/upkg.py`](build/upkg.py), a small UE2 package writer, injects them into a **scratch copy** of `IpDrv.u` used only for the build.
 
-The output is a small package (19 KB) that refers to `Core`, `Engine` and `IpDrv` by name. On the server it links against the server's own packages. Nothing from the patch ends up in it.
+The output is a small package (25 KB) that refers to `Core`, `Engine` and `IpDrv` by name. On the server it links against the server's own packages. Nothing from the patch ends up in it.
 
 ### 5. The first map change crashed the server
 
@@ -308,9 +371,9 @@ The practical rule: 2 live changes per process, then a restart for the 3rd. Rest
 
 ### 8. Why nobody hit this before
 
-XIII's own multiplayer never travels a dedicated server. At the end of a match, `XIIIMPGameRules.HandleRestartGame` cancels the restart and sends players back to the menu. The broken code path only runs when something calls `ServerTravel` on a dedicated server, and nothing in the shipped game does.
+XIII's own multiplayer never travels a dedicated server. At the end of a match the server waits for players and plays the same map again. The restart path that could travel (`GameInfo.RestartGame`) is not reached on a dedicated server, and `XIIIMPGameRules.HandleRestartGame` cancels it anyway. The broken code path only runs when something calls `ServerTravel` on a dedicated server, and nothing in the shipped game does.
 
-Community servers work around the missing map change by restarting the process. [Opaquit's XIII Files](https://xiii.opaquit.com/2026b.php) describes its servers as restarting every hour with a random map. No public fix for in-process map changes was found: InsideXIII, Opaquit's XIII Files, ModDB and GitHub were all searched.
+Community servers work around the missing map change by restarting the process. [Opaquit's XIII Files](https://xiii.opaquit.com/2026b.php) describes its servers as restarting every hour with a random map. In February 2025, Locke (InsideXIII) described map changes the same way: stop the server and start another, with no built-in map rotation. A 2021 community test server had F5 map voting, but its method is unknown and was never published. No public fix for in-process map changes was found: InsideXIII, Opaquit's XIII Files, ModDB and GitHub were all searched.
 
 ---
 
@@ -326,6 +389,9 @@ Community servers work around the missing map change by restarting the process. 
 | Chat handler in place on every map, `poll`, `tell` (unknown name), `ban` | Tested |
 | `!` commands from a temporary admin (`LabInject`) queued, run and answered by a poller | Tested |
 | A real admin's `!` chat line reaching the server, private replies showing in XIII's chat | **Not yet tested** |
+| Match end detected, rotation to the next map, a vote that passed | Tested |
+| Bots on the dedicated server in all 6 modes, `bots 0` | Tested |
+| Bots against real players, a bot leaving when a player joins | **Not yet tested** |
 
 Reports from real games are welcome as issues.
 
@@ -333,9 +399,10 @@ Reports from real games are welcome as issues.
 
 ```
 patch/xiii_engine_patch.py     check / apply / revert the 7-byte Engine.dll patch
+patch/xiii_bot_patch.py        check / apply / revert the bot patches (XIIIMP.u, XIIIMP.dll)
 TwoHoursCtl/Classes/           the add-on source (UnrealScript): TwoHoursCtl, TwoHoursChat
 dist/TwoHoursCtl.u             the compiled add-on
-tools/xiii_ctl.py              command-line client (status, travel, say, kick, ban, tell, poll)
+tools/xiii_ctl.py              command-line client (status, travel, say, kick, ban, tell, poll, bots)
 build/build_ctl.py             compiles the add-on with UCC under Wine
 build/upkg.py                  minimal UE2 package reader/writer
 build/stubs/                   declaration-only IpDrv classes for the compiler
