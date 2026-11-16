@@ -112,15 +112,17 @@ def run_make(system: Path) -> str:
 
 
 def verify(package: Path) -> None:
-    """Fail unless `package` was compiled from the current TwoHoursCtl.uc.
-    UCC stores the class source as ScriptText, minus defaultproperties."""
+    """Fail unless `package` was compiled from the current Classes/*.uc.
+    UCC stores each class source as ScriptText, minus defaultproperties."""
     from upkg import Package
-    embedded = Package(package.read_bytes()).script_text(PACKAGE).replace("\r\n", "\n")
-    src = (HERE.parent / PACKAGE / "Classes" / f"{PACKAGE}.uc").read_text()
-    if embedded.rstrip() != src[:src.index("defaultproperties")].rstrip():
-        raise SystemExit(f"{package} was NOT built from the current {PACKAGE}.uc")
-    print(f"{package}: built from the current {PACKAGE}.uc "
-          f"(sha256 {hashlib.sha256(package.read_bytes()).hexdigest()})")
+    pkg = Package(package.read_bytes())
+    for path in sorted((HERE.parent / PACKAGE / "Classes").glob("*.uc")):
+        embedded = pkg.script_text(path.stem).replace("\r\n", "\n")
+        src = path.read_text()
+        if embedded.rstrip() != src[:src.index("defaultproperties")].rstrip():
+            raise SystemExit(f"{package} was NOT built from the current {path.name}")
+        print(f"{package}: {path.stem} built from the current {path.name}")
+    print(f"{package}: sha256 {hashlib.sha256(package.read_bytes()).hexdigest()}")
 
 
 def main(argv=None) -> None:

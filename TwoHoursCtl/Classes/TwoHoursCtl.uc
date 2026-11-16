@@ -16,6 +16,18 @@
 //   travel <url>      Level.ServerTravel(url, false): players stay connected
 //   say <text>        chat line to every player
 //   kick <name>       AccessControl.Kick (the in-game admin's kick)
+//   ban <name>        AccessControl.KickBan (kick + IP ban in XIII.ini)
+//   tell <name>\t<text>  private message to one player (ClientMessage);
+//                     without a tab the name is the first word
+//   poll              ok + the queued admin chat commands, one
+//                     "<name>\t<command>" line each (TwoHoursChat), then clears
+//   inject admin|player <text>   LAB ONLY, refused unless LabInject=True:
+//                     a throwaway controller of that kind "says" <text>, so a
+//                     lab can drive the chat path without a game client
+//
+// It also swaps TwoHoursChat in as Level.Game.BroadcastHandler (checked every
+// second, so the order of InitGame and ServerActors does not matter): admin
+// chat lines starting with "!" become commands for the bridge.
 //
 // Only datagrams from 127.0.0.1 with the right key are obeyed; anything else
 // is dropped without a reply. The actor is not replicated (clients never need
@@ -29,6 +41,8 @@ class TwoHoursCtl extends UdpLink config;
 
 var config int CtlPort;
 var config string CtlKey;
+var config bool LabInject;
+var TwoHoursChat Chat;
 
 function PostBeginPlay()
 {
@@ -50,6 +64,77 @@ function PostBeginPlay()
 		return;
 	}
 	Log("TwoHoursCtl: listening on UDP port" @ Bound);
+	InstallChat();
+	SetTimer(1.0, true);
+}
+
+function Timer()
+{
+	InstallChat();
+}
+
+// Make TwoHoursChat the game's BroadcastHandler, keeping the old one's state.
+function InstallChat()
+{
+	local BroadcastHandler Old;
+
+	if (Level.Game == None)
+		return;
+	Old = Level.Game.BroadcastHandler;
+	if (Chat != None && Old == Chat)
+		return;
+	if (Chat == None)
+		Chat = Spawn(class'TwoHoursChat');
+	if (Chat == None)
+		return;
+	if (Old != None)
+	{
+		Chat.bMuteSpectators = Old.bMuteSpectators;
+		Chat.SentText = Old.SentText;
+		Log("TwoHoursCtl: chat commands on, BroadcastHandler" @ Old.Class @ "->" @ Chat.Class);
+		Old.Destroy();
+	}
+	else
+		Log("TwoHoursCtl: chat commands on, BroadcastHandler" @ Chat.Class);
+	Level.Game.BroadcastHandler = Chat;
+}
+
+function PlayerController FindPlayer(string Who)
+{
+	local Controller C;
+	local PlayerController P;
+
+	for (C = Level.ControllerList; C != None; C = C.NextController)
+	{
+		P = PlayerController(C);
+		if (P != None && P.PlayerReplicationInfo != None
+				&& P.PlayerReplicationInfo.PlayerName ~= Who)
+			return P;
+	}
+	return None;
+}
+
+// LAB ONLY (LabInject=True): a throwaway controller of class Kind says Msg.
+function string Inject(string Kind, string Msg)
+{
+	local class<PlayerController> PC;
+	local PlayerController P;
+
+	if (Kind ~= "admin")
+		PC = class<PlayerController>(DynamicLoadObject("XIIIMP.XIIIAdmin", class'Class'));
+	else
+		PC = class'PlayerController';
+	if (PC == None)
+		return "error no controller class";
+	P = Spawn(PC);
+	if (P == None)
+		return "error spawn failed";
+	if (P.PlayerReplicationInfo != None)
+		P.PlayerReplicationInfo.PlayerName = "lab" $ Kind;
+	Log("TwoHoursCtl: LAB inject as" @ P.Class $ ":" @ Msg);
+	Level.Game.Broadcast(P, Msg, 'Say');
+	P.Destroy();
+	return "ok";
 }
 
 // The first space-separated word of S; S keeps the rest.
@@ -117,7 +202,9 @@ function string StatusText()
 
 event ReceivedText(IpAddr Addr, string Text)
 {
-	local string Rest, Key, Id, Cmd;
+	local string Rest, Key, Id, Cmd, Who;
+	local PlayerController P;
+	local int i;
 
 	// Local bridge only: a datagram from anywhere else gets no reply at all.
 	if (Left(IpAddrToString(Addr), 10) != "127.0.0.1:")
@@ -158,6 +245,48 @@ event ReceivedText(IpAddr Addr, string Text)
 		if (Level.Game.AccessControl != None && Rest != "")
 			Level.Game.AccessControl.Kick(Rest);
 		SendText(Addr, Id @ "ok");
+	}
+	else if (Cmd == "BAN")
+	{
+		if (Level.Game.AccessControl != None && Rest != "")
+			Level.Game.AccessControl.KickBan(Rest);
+		SendText(Addr, Id @ "ok");
+	}
+	else if (Cmd == "TELL")
+	{
+		i = InStr(Rest, Chr(9));
+		if (i >= 0)
+		{
+			Who = Left(Rest, i);
+			Rest = Mid(Rest, i + 1);
+		}
+		else
+			Who = NextWord(Rest);
+		P = FindPlayer(Who);
+		if (P == None || Rest == "")
+		{
+			SendText(Addr, Id @ "error no player" @ Who);
+			return;
+		}
+		P.ClientMessage(Rest);
+		SendText(Addr, Id @ "ok");
+	}
+	else if (Cmd == "POLL")
+	{
+		if (Chat == None)
+			SendText(Addr, Id @ "ok");
+		else
+			SendText(Addr, Id @ "ok" $ Chat.TakeQueue());
+	}
+	else if (Cmd == "INJECT")
+	{
+		if (!LabInject)
+		{
+			SendText(Addr, Id @ "error inject is off (lab only)");
+			return;
+		}
+		Who = NextWord(Rest);
+		SendText(Addr, Id @ Inject(Who, Rest));
 	}
 	else
 		SendText(Addr, Id @ "error unknown command" @ Cmd);

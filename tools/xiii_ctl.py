@@ -8,6 +8,13 @@ Run it ON the server machine (the actor ignores datagrams that are not from
   python3 xiii_ctl.py --key <CtlKey> travel "DM_Amos.unr?MapName=FBI?NP=12?FF=0?FR=40?TI=20?Game=XIIIMP.XIIIMPGameInfo?GameIdx=0?Mutator="
   python3 xiii_ctl.py --key <CtlKey> say "map change in 10 seconds"
   python3 xiii_ctl.py --key <CtlKey> kick SomePlayer
+  python3 xiii_ctl.py --key <CtlKey> ban SomePlayer
+  python3 xiii_ctl.py --key <CtlKey> tell "Some Player" "only you see this"
+  python3 xiii_ctl.py --key <CtlKey> poll
+
+`tell` sends "tell <name><TAB><text>", so a name may hold spaces. `poll` prints
+the admin chat commands queued since the last poll, one "<name><TAB><command>"
+line each, and empties the queue.
 
 Wire format, one UDP datagram each way:
   request  "<key> <id> <command> [args]"
@@ -34,14 +41,27 @@ def request(key: str, command: str, *, port: int = 7098, timeout: float = 3.0) -
                 return rest
 
 
+def build_command(words: list) -> str:
+    """The datagram's command part. `tell <name> <text...>` puts a tab between
+    the name and the text."""
+    if words and words[0].lower() == "tell":
+        if len(words) < 3:
+            raise SystemExit("usage: tell <name> <text>")
+        return f"tell {words[1]}\t{' '.join(words[2:])}"
+    return " ".join(words)
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="TwoHoursCtl client (status, travel, say, kick)")
+    ap = argparse.ArgumentParser(
+        description="TwoHoursCtl client (status, travel, say, kick, ban, tell, poll)")
     ap.add_argument("--key", required=True, help="CtlKey from XIII.ini")
     ap.add_argument("--port", type=int, default=7098, help="CtlPort (default 7098)")
-    ap.add_argument("command", nargs="+", help="status | travel <url> | say <text> | kick <name>")
+    ap.add_argument("command", nargs="+",
+                    help="status | travel <url> | say <text> | kick <name> | ban <name> | "
+                         "tell <name> <text> | poll")
     a = ap.parse_args()
     try:
-        print(request(a.key, " ".join(a.command), port=a.port))
+        print(request(a.key, build_command(a.command), port=a.port))
     except socket.timeout:
         print("no reply: server down, map loading, wrong key, or the actor is not loaded",
               file=sys.stderr)

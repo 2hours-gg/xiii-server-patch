@@ -7,7 +7,7 @@ The stock XIII server cannot change map while it runs. It has no remote console.
 | Part | What it is | Size |
 |---|---|---|
 | [`patch/xiii_engine_patch.py`](patch/xiii_engine_patch.py) | Patches `Engine.dll` so a map change no longer crashes the server | 7 bytes changed |
-| [`TwoHoursCtl/`](TwoHoursCtl/Classes/TwoHoursCtl.uc) | A small server add-on in UnrealScript that accepts local commands: `status`, `travel`, `say`, `kick` | 8 KB `.u` |
+| [`TwoHoursCtl/`](TwoHoursCtl/Classes/) | A small server add-on in UnrealScript. It accepts local commands (`status`, `travel`, `say`, `kick`, `ban`, `tell`, `poll`) and catches admin chat commands such as `!map DM_Banque` | 19 KB `.u` |
 | [`tools/xiii_ctl.py`](tools/xiii_ctl.py) | A command-line client for the add-on | |
 | [`build/`](build/) | How the add-on is compiled, since the server files cannot compile UnrealScript | |
 
@@ -66,6 +66,7 @@ CtlKey=pick-a-long-random-key
 ```
 
 - `CtlKey` must be letters and digits only (a space would split it), for example `k7f3q9x2m4w8z1`.
+- `LabInject` (default `False`) is a test hook, see [In-game admin commands](#in-game-admin-commands). Leave it off.
 - The add-on only listens when `CtlKey` is set.
 - It only obeys datagrams from `127.0.0.1`, so the port does not need to be opened in a firewall.
 
@@ -79,6 +80,7 @@ UCC.exe server "DM_Amos.unr?MapName=FBI?NP=12?FF=0?FR=40?TI=20?Game=XIIIMP.XIIIM
 
 - The URL must not contain spaces, or UCC fails with `Invalid URL`.
 - The log should show `TwoHoursCtl: listening on UDP port 7098`.
+- Then `TwoHoursCtl: chat commands on, BroadcastHandler Engine.BroadcastHandler -> TwoHoursCtl.TwoHoursChat`.
 
 ### 5. Change the map
 
@@ -89,7 +91,14 @@ python3 tools/xiii_ctl.py --key <CtlKey> status
 python3 tools/xiii_ctl.py --key <CtlKey> travel "CTF_Base.unr?MapName=USS-Patriot?NP=12?FF=0?FR=40?TI=20?Game=XIIIMP.XIIIMPCTFGameInfo?GameIdx=2?Mutator=?AdminPassword=secret"
 python3 tools/xiii_ctl.py --key <CtlKey> say "new map in 10 seconds"
 python3 tools/xiii_ctl.py --key <CtlKey> kick PlayerName
+python3 tools/xiii_ctl.py --key <CtlKey> ban PlayerName
+python3 tools/xiii_ctl.py --key <CtlKey> tell PlayerName "only this player sees this"
+python3 tools/xiii_ctl.py --key <CtlKey> poll
 ```
+
+- `ban` is the game's own kick + IP ban. The ban is saved in `XIII.ini`.
+- `tell` sends a private message (`ClientMessage`) to the player with that exact name (any case).
+- `poll` returns the queued admin chat commands, see below.
 
 A travel URL is a full session URL, like the one on the command line. Repeat every option you want to keep, `AdminPassword` included: the new map uses only the options in the new URL. `MapName` is the map's display name without spaces.
 
@@ -108,6 +117,63 @@ Modes are the `Game` and `GameIdx` pair in the URL:
 
 ---
 
+## In-game admin commands
+
+Admins can also run commands from the in-game chat. An admin is a player who joined with the admin password: `SWITCHLEVEL <ip>:7777?Password=<admin password>`.
+
+### Why chat
+
+In XIII, chat is the only text a player can send to the server:
+
+- `Admin <command>` runs on the player's own PC.
+- There is no `Mutate` command.
+- `Say` and `TeamSay` are sent to the server. They end in `Level.Game.Broadcast` and `BroadcastTeam`, which pass the line to `Level.Game.BroadcastHandler`.
+
+### What the add-on does
+
+- `TwoHoursChat` (in the same package) extends `BroadcastHandler`. `TwoHoursCtl` puts it in place of the game's handler. It keeps the old handler's settings and checks again every second, so it is also in place after every map change.
+- A chat line that starts with `!` is a command. It is never shown to other players.
+- From an admin (the game makes admins an `XIIIMP.XIIIAdmin`), the command is queued as `<player name><TAB><command without !>`. The queue holds 8 commands.
+- From anyone else, the sender gets a private reply: `Admin only. Join with ?Password=<admin password>.`
+- Every other line is normal chat.
+
+### Running the queued commands
+
+The add-on only queues commands. Something on the server machine must read the queue with `poll`, run each command and answer with `tell`. 2hours.gg servers do this with a small Python program, about once a second.
+
+A server without that program needs its own poller. To see what is queued:
+
+```
+python3 tools/xiii_ctl.py --key <CtlKey> poll
+```
+
+```
+ok
+Boss	map DM_Banque ctf
+Boss	players
+```
+
+`poll` empties the queue. A poller can then call `travel`, `kick`, `ban`, `tell` or `say` with the same key.
+
+The commands 2hours.gg runs (any case, map names in any case):
+
+| Command | What it does |
+|---|---|
+| `!map <map> [mode]` | Change map. Aliases: `!changelevel`, `!servertravel` |
+| `!mode <mode> [map]` | Change mode |
+| `!restart` | Reload the current map and mode |
+| `!maps [mode]`, `!modes`, `!players` | Lists, sent privately |
+| `!kick <name>`, `!ban <name>` | Kick, or kick and ban the IP |
+| `!help` | The list above |
+
+The admin gets the answer privately. A map change is also announced to everyone with `say`. The 2-live-changes limit still applies: the third change restarts the server.
+
+### Testing without a game client
+
+`LabInject=True` in `[TwoHoursCtl.TwoHoursCtl]` enables one more command: `inject admin|player <text>`. It spawns a temporary admin or player that "says" the text through `Level.Game.Broadcast`, then removes it. It is meant for test servers only and is off by default.
+
+---
+
 ## Binary reference
 
 All hashes are sha256.
@@ -119,12 +185,12 @@ All hashes are sha256.
 | `System/Engine.dll` (original) | 2433024 | `810b0c9600d06e104104f1dbf04d7989584b6d931d75e4a5ff933be598cdafdc` | PE32 i386, image base `0x10300000`, linked 2003-10-21 18:26:41 UTC |
 | `System/Engine.dll` (patched) | 2433024 | `ff6183bfdbb908a0005a8dbecc7ce9fe7de11c92c8dc321780ca7fc1aa02e864` | |
 | `System/UCC.exe` | 61440 | `2909a98bd77ddf66b688f4d4f5ffaccfbaf269e72a7feb3e282c072b964f2bf9` | Unchanged |
-| `dist/TwoHoursCtl.u` | 8394 | `876506e6211751f39a549f8b144fe50e8763e7a3db634d4361e440087ec57089` | Built from `TwoHoursCtl/Classes/TwoHoursCtl.uc` |
+| `dist/TwoHoursCtl.u` | 19048 | `b8973532b6d315d40f78ca6b29634f8a7ffda9ef2ba500454bfe1a3ca1f76fd8` | Built from `TwoHoursCtl/Classes/TwoHoursCtl.uc` and `TwoHoursChat.uc` |
 | `Classic_XIII___Patch_by_Arthur_v1.4.2.1_2019-09-04.exe` | | `4cd267d92353ffd99894d65794fc8f50b8a387476b2cac3dfd42d2f78866d0c7` | Build-time only (compiler toolchain) |
 
 In `Engine.dll`, the `.text` section has the same file offset and virtual address (`0x1000`). So a file offset `X` in the code is the address `0x10300000 + X` in a debugger.
 
-A `.u` package stores its own UnrealScript source text. This command checks that `dist/TwoHoursCtl.u` was built from the `.uc` in this repository:
+A `.u` package stores its own UnrealScript source text. This command checks that `dist/TwoHoursCtl.u` was built from the `.uc` files in this repository:
 
 ```
 python3 build/build_ctl.py --verify dist/TwoHoursCtl.u
@@ -169,7 +235,7 @@ Unreal servers load extra actors listed as `ServerActors=` in the ini. The engin
 - Even there, `IpDrv.u` is stripped, and `UdpLink` lives in `IpDrv.u`. So [`build/stubs/`](build/stubs/) holds declaration-only stand-ins (the native function signatures, no logic) for its 9 classes.
 - [`build/upkg.py`](build/upkg.py), a small UE2 package writer, injects them into a **scratch copy** of `IpDrv.u` used only for the build.
 
-The output is an 8 KB package that refers to `Core`, `Engine` and `IpDrv` by name. On the server it links against the server's own packages. Nothing from the patch ends up in it.
+The output is a small package (19 KB) that refers to `Core`, `Engine` and `IpDrv` by name. On the server it links against the server's own packages. Nothing from the patch ends up in it.
 
 ### 5. The first map change crashed the server
 
@@ -257,6 +323,9 @@ Community servers work around the missing map change by restarting the process. 
 | 4th-load exit and restart fallback | Tested |
 | A real XIII client following a `ServerTravel` onto the new map | **Not yet tested** |
 | `say` showing in a player's chat, `kick` removing a player | **Not yet tested** |
+| Chat handler in place on every map, `poll`, `tell` (unknown name), `ban` | Tested |
+| `!` commands from a temporary admin (`LabInject`) queued, run and answered by a poller | Tested |
+| A real admin's `!` chat line reaching the server, private replies showing in XIII's chat | **Not yet tested** |
 
 Reports from real games are welcome as issues.
 
@@ -264,15 +333,15 @@ Reports from real games are welcome as issues.
 
 ```
 patch/xiii_engine_patch.py     check / apply / revert the 7-byte Engine.dll patch
-TwoHoursCtl/Classes/           the add-on source (UnrealScript)
+TwoHoursCtl/Classes/           the add-on source (UnrealScript): TwoHoursCtl, TwoHoursChat
 dist/TwoHoursCtl.u             the compiled add-on
-tools/xiii_ctl.py              command-line client (status, travel, say, kick)
+tools/xiii_ctl.py              command-line client (status, travel, say, kick, ban, tell, poll)
 build/build_ctl.py             compiles the add-on with UCC under Wine
 build/upkg.py                  minimal UE2 package reader/writer
 build/stubs/                   declaration-only IpDrv classes for the compiler
 ```
 
-The header comment of `TwoHoursCtl.uc` mentions file paths from the 2hours.gg codebase. It is kept byte-identical so that `dist/TwoHoursCtl.u`, which embeds its source, still matches it.
+The header comments of the `.uc` files mention file paths from the 2hours.gg codebase. They are kept byte-identical so that `dist/TwoHoursCtl.u`, which embeds their source, still matches them.
 
 To rebuild the add-on, you need Wine (32-bit prefix), 7-Zip and both the patch 1.4.2.1 installer and the server files:
 
