@@ -7,14 +7,16 @@ The stock XIII server cannot change map while it runs. It has no remote console.
 | Part | What it is | Size |
 |---|---|---|
 | [`patch/xiii_engine_patch.py`](patch/xiii_engine_patch.py) | Patches `Engine.dll` so a map change no longer crashes the server | 7 bytes changed |
+| [`patch/xiii_clienttravel_patch.py`](patch/xiii_clienttravel_patch.py) | Patches `Engine.u` so players connected during a map change are told to follow it, instead of crashing the server | 1 byte changed |
 | [`patch/xiii_bot_patch.py`](patch/xiii_bot_patch.py) | Patches `XIIIMP.u` and `XIIIMP.dll` so the dedicated server can run bots | 1 byte + 32 bytes |
 | [`TwoHoursCtl/`](TwoHoursCtl/Classes/) | A small server add-on in UnrealScript. It accepts local commands (`status`, `travel`, `say`, `kick`, `ban`, `tell`, `poll`, `bots`), catches chat commands such as `!map DM_Banque` or `!vote DM_Pal`, and reports the end of each match | 25 KB `.u` |
 | [`tools/xiii_ctl.py`](tools/xiii_ctl.py) | A command-line client for the add-on | |
+| [`tools/xiii_netclient.py`](tools/xiii_netclient.py) | A minimal XIII network client for tests: it joins a server over UDP like a player | |
 | [`build/`](build/) | How the add-on is compiled, since the server files cannot compile UnrealScript | |
 
 This is the code behind the web console of the XIII servers on **[2hours.gg/xiii](https://2hours.gg/xiii)**. There, the map and mode change from a browser while players stay connected.
 
-No Ubisoft files are in this repository. The patchers edit copies of `Engine.dll`, `XIIIMP.u` and `XIIIMP.dll` that you already have.
+No Ubisoft files are in this repository. The patchers edit copies of `Engine.dll`, `Engine.u`, `XIIIMP.u` and `XIIIMP.dll` that you already have.
 
 ---
 
@@ -51,6 +53,14 @@ You can also patch it by hand with a hex editor:
 | `0x7C44D` | `E8 6E C3 FF FF` | `90 90 90 90 90` |
 | `0x7C5C6` | `EB 08` | `EB 3F` |
 
+Then patch `Engine.u`. **Without this, a map change crashes the server as soon as a real player is connected** (see [step 8](#8-the-first-real-player-crashed-it)):
+
+```
+python3 patch/xiii_clienttravel_patch.py apply <XIII>/System
+```
+
+By hand: file offset `222008` (decimal), `1B` -> `13`.
+
 ### 3. Install the add-on
 
 Copy [`dist/TwoHoursCtl.u`](dist/TwoHoursCtl.u) into `<XIII>/System/`.
@@ -76,10 +86,18 @@ CtlKey=pick-a-long-random-key
 Same as usual, from `<XIII>/System`. Under Wine on Linux, prefix it with `wine`:
 
 ```
-UCC.exe server "DM_Amos.unr?MapName=FBI?NP=12?FF=0?FR=40?TI=20?Game=XIIIMP.XIIIMPGameInfo?GameIdx=0?Mutator=?AdminPassword=secret" -PORT=7777
+UCC.exe server "DM_Amos.unr?MapName=FBI?NP=12?FF=0?FR=40?TI=20?Game=XIIIMP.XIIIMPGameInfo?GameIdx=0?Mutator=" -PORT=7777
 ```
 
 - The URL must not contain spaces, or UCC fails with `Invalid URL`.
+- Put the admin password in `XIII.ini`, not in the URL:
+
+  ```ini
+  [Engine.AccessControl]
+  AdminPassword=pick-a-password
+  ```
+
+  The game reads it on every map. A password in the URL (`?AdminPassword=`) also works, but a live map change sends the whole travel URL to every connected player.
 - The log should show `TwoHoursCtl: listening on UDP port 7098`.
 - Then `TwoHoursCtl: chat commands on, BroadcastHandler Engine.BroadcastHandler -> TwoHoursCtl.TwoHoursChat`.
 
@@ -89,7 +107,7 @@ Run these on the server machine:
 
 ```
 python3 tools/xiii_ctl.py --key <CtlKey> status
-python3 tools/xiii_ctl.py --key <CtlKey> travel "CTF_Base.unr?MapName=USS-Patriot?NP=12?FF=0?FR=40?TI=20?Game=XIIIMP.XIIIMPCTFGameInfo?GameIdx=2?Mutator=?AdminPassword=secret"
+python3 tools/xiii_ctl.py --key <CtlKey> travel "CTF_Base.unr?MapName=USS-Patriot?NP=12?FF=0?FR=40?TI=20?Game=XIIIMP.XIIIMPCTFGameInfo?GameIdx=2?Mutator="
 python3 tools/xiii_ctl.py --key <CtlKey> say "new map in 10 seconds"
 python3 tools/xiii_ctl.py --key <CtlKey> kick PlayerName
 python3 tools/xiii_ctl.py --key <CtlKey> ban PlayerName
@@ -101,7 +119,7 @@ python3 tools/xiii_ctl.py --key <CtlKey> poll
 - `tell` sends a private message (`ClientMessage`) to the player with that exact name (any case).
 - `poll` returns the queued admin chat commands, see below.
 
-A travel URL is a full session URL, like the one on the command line. Repeat every option you want to keep, `AdminPassword` included: the new map uses only the options in the new URL. `MapName` is the map's display name without spaces.
+A travel URL is a full session URL, like the one on the command line. Repeat every option you want to keep: the new map uses only the options in the new URL. Keep the admin password out of it (it goes to every player); set it in `XIII.ini` as above. `MapName` is the map's display name without spaces.
 
 Modes are the `Game` and `GameIdx` pair in the URL:
 
@@ -181,6 +199,13 @@ Everyone may use the `!vote` row, `!maps`, `!modes`, `!players` and `!help`; the
 - `inject admin|player <text>` spawns a temporary admin or player that "says" the text through `Level.Game.Broadcast`, then removes it.
 - `labhold on|off` keeps a player controller with no client on the server. A match only starts when a player is present, so this lets a match (and bots) start without a game client.
 
+These fake players have **no network connection**, so they do not test anything that is sent to players. A live map change passed every test with them and still crashed with the first real player. For that, use [`tools/xiii_netclient.py`](tools/xiii_netclient.py): it joins over UDP like a real client (the server logs `Join succeeded`), answers every packet so it stays connected, and can search what the server sends it:
+
+```
+python3 tools/xiii_netclient.py --server 127.0.0.1:7777 --name Tester --password <admin pw> \
+    --seconds 60 --dump BristolSuites
+```
+
 ---
 
 ## Map rotation
@@ -243,6 +268,8 @@ All hashes are sha256.
 | `xiii_server_829_0611_update.7z` | | `a4fa488d66d156ac9c9ff3729c1d6a7a57732ad5661c7d28e239162aa932014b` | InsideXIII 2018 update |
 | `System/Engine.dll` (original) | 2433024 | `810b0c9600d06e104104f1dbf04d7989584b6d931d75e4a5ff933be598cdafdc` | PE32 i386, image base `0x10300000`, linked 2003-10-21 18:26:41 UTC |
 | `System/Engine.dll` (patched) | 2433024 | `ff6183bfdbb908a0005a8dbecc7ce9fe7de11c92c8dc321780ca7fc1aa02e864` | |
+| `System/Engine.u` (original) | 547891 | `da24040b4fca0d3ec6dd92aa3b192d3ee82b25fa358170bbeded4d8432683234` | Server build, no source text |
+| `System/Engine.u` (patched) | 547891 | `019296366fe36805fbf2721cb09c365dd117d42ad05a6128f2444aa21a4af7f6` | `ClientTravel` no longer static |
 | `System/UCC.exe` | 61440 | `2909a98bd77ddf66b688f4d4f5ffaccfbaf269e72a7feb3e282c072b964f2bf9` | Unchanged |
 | `System/XIIIMP.u` (original) | 941397 | `6f5f07f13b5fadd61abfaf9622e8dd15f91675f36a6525d7bd14de715a2c3450` | Server build, carries its UnrealScript source text |
 | `System/XIIIMP.u` (patched) | 941397 | `d4771d0002c4a324bfef6f8891958e2a3fb2c5d17b38294c2673493b69ac5e1e` | |
@@ -369,7 +396,49 @@ The **4th map load** in one process (the first map plus 3 travels) always ended 
 
 The practical rule: 2 live changes per process, then a restart for the 3rd. Restarting a UE2 server takes a few seconds. Players rejoin the same address.
 
-### 8. Why nobody hit this before
+### 8. The first real player crashed it
+
+Everything above was tested with nobody connected. The first map change with a real XIII client on the server crashed it:
+
+```
+ProcessServerTravel: DM_Banque.unr?...
+Cast of TcpipConnection Transient.TcpipConnection2 to Viewport failed
+History: UGameEngine::SetClientTravel <- UObject::ProcessEvent <- ...
+```
+
+`ProcessServerTravel` tells each connected player to follow the server to the new map:
+
+```
+foreach DynamicActors( class'PlayerController', P )
+  if( NetConnection( P.Player)!=None )
+    P.ClientTravel( URL, TRAVEL_Relative, bItems );
+```
+
+`ClientTravel` is in the replication list (`reliable if( Role==ROLE_Authority ... ) ClientTravel`), so the server should send it to the player. But XIII declares it
+
+```
+native static function event ClientTravel( string URL, ETravelType TravelType, bool bItems );
+```
+
+and the engine never sends a `static` function over the network. The native code ran on the server. There, the player object is a network connection (`TcpipConnection`), not a screen (`Viewport`), and the cast failed.
+
+**Finding the bit.** A function's flags are stored as one 32-bit value in the package. Comparing functions whose declarations are known (the client patch's `Engine.u` carries its source text):
+
+| Function | Declaration | Flags |
+|---|---|---|
+| `GetPlayerNetworkAddress`, `Spawn`, `Destroy` | `native(...) static final` | `0x00190100` |
+| `Sleep` | `native(256) final latent` (not static) | `0x00110500` |
+| `ClientTravel` | `native static event`, replicated | `0x001b3000` |
+
+Every `static` function has `0x00080000`; `Sleep` does not. Clearing it on `ClientTravel` (file offset 222008, `1B` to `13`) makes the server send the call to each player. Players keep their own `Engine.u`, where the native runs locally as it must.
+
+**Proof.** [`tools/xiii_netclient.py`](tools/xiii_netclient.py) is a minimal network client. It speaks the UDP protocol (packet ids, bunches, the text control channel `HELLO`, `CHALLENGE`, `LOGIN`, `WELCOME`, `JOIN`). The login challenge is answered like the game does (`UGameEngine::ChallengeResponse` in `Engine.dll`: `(c*237) ^ (c>>16) ^ (c<<16) ^ 0x93fe92ce`).
+
+- Unpatched, with the client joined: the same crash.
+- Patched: the server changed map and stayed up. The client received the call with the full URL, `DM_Pal.unr?MapName=BristolSuites?...`, about 1 second after the change. A new connection then joined the new map.
+- Whether the real game client loads the new map and stays on the server is not tested yet.
+
+### 9. Why nobody hit this before
 
 XIII's own multiplayer never travels a dedicated server. At the end of a match the server waits for players and plays the same map again. The restart path that could travel (`GameInfo.RestartGame`) is not reached on a dedicated server, and `XIIIMPGameRules.HandleRestartGame` cancels it anyway. The broken code path only runs when something calls `ServerTravel` on a dedicated server, and nothing in the shipped game does.
 
@@ -384,6 +453,8 @@ Community servers work around the missing map change by restarting the process. 
 | Server travels across all 6 modes, server stays up | Tested |
 | `status`, `say` sent, wrong key ignored | Tested |
 | 4th-load exit and restart fallback | Tested |
+| A map change with a real player connected | **Crashed** with the first real client; fixed by `xiii_clienttravel_patch.py` |
+| The server sending the travel to a connected network client (`tools/xiii_netclient.py`) | Tested |
 | A real XIII client following a `ServerTravel` onto the new map | **Not yet tested** |
 | `say` showing in a player's chat, `kick` removing a player | **Not yet tested** |
 | Chat handler in place on every map, `poll`, `tell` (unknown name), `ban` | Tested |
@@ -400,9 +471,11 @@ Reports from real games are welcome as issues.
 ```
 patch/xiii_engine_patch.py     check / apply / revert the 7-byte Engine.dll patch
 patch/xiii_bot_patch.py        check / apply / revert the bot patches (XIIIMP.u, XIIIMP.dll)
+patch/xiii_clienttravel_patch.py  check / apply / revert the 1-byte Engine.u patch (live changes with players)
 TwoHoursCtl/Classes/           the add-on source (UnrealScript): TwoHoursCtl, TwoHoursChat
 dist/TwoHoursCtl.u             the compiled add-on
 tools/xiii_ctl.py              command-line client (status, travel, say, kick, ban, tell, poll, bots)
+tools/xiii_netclient.py        minimal XIII network client for tests
 build/build_ctl.py             compiles the add-on with UCC under Wine
 build/upkg.py                  minimal UE2 package reader/writer
 build/stubs/                   declaration-only IpDrv classes for the compiler
