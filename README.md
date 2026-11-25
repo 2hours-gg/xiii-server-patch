@@ -65,7 +65,7 @@ sha256sum -c --ignore-missing SHA256SUMS
 gh attestation verify xiii-server-patch-v1.0.0.zip -R 2hours-gg/xiii-server-patch
 ```
 
-`SHA256SUMS` also lists the add-on, `dist/TwoHoursCtl.u`. Run the same `sha256sum -c SHA256SUMS` inside the unzipped folder to check it, or rebuild it yourself and compare (see [Build it yourself](#build-it-yourself)). On macOS, use `shasum -a 256` in place of `sha256sum`.
+`SHA256SUMS` also lists the add-on, `dist/TwoHoursCtl.u`. From inside the unzipped `xiii-server-patch-v1.0.0` folder, `sha256sum -c --ignore-missing ../SHA256SUMS` checks it, or rebuild it yourself and compare (see [Build it yourself](#build-it-yourself)). On macOS, use `shasum -a 256` in place of `sha256sum`.
 
 On Windows, `certutil -hashfile xiii-server-patch-v1.0.0.zip SHA256` prints the hash to compare with `SHA256SUMS`. `gh` is the [GitHub CLI](https://cli.github.com/).
 
