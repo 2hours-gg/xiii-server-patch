@@ -1,0 +1,73 @@
+name: release
+
+# Push a tag v* to publish a release. The zip holds the committed
+# dist/TwoHoursCtl.u: compiling the add-on needs Wine and the community
+# patch 1.4.2.1 toolchain, which are not in CI. The job checks that the
+# committed package was built from the committed sources (--verify), runs the
+# tests, writes SHA256SUMS and MD5SUMS and signs a build provenance
+# attestation for the zip.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release, upload the files
+      id-token: write        # sign the attestation (Sigstore)
+      attestations: write    # store it on GitHub
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Tests and the add-on source check
+        run: |
+          python -m unittest discover -s tests
+          python build/build_ctl.py --verify dist/TwoHoursCtl.u
+      - name: The tag matches CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: grep -q "^## ${TAG#v} " CHANGELOG.md
+      - name: Build the zip
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          name="xiii-server-patch-${TAG}"
+          mkdir -p "out/${name}"
+          # build/ and TwoHoursCtl/ let tools/xiii_netclient.py run and
+          # build/build_ctl.py --verify check the add-on from the zip alone.
+          cp -r install.py patch dist tools build TwoHoursCtl LICENSE README.md CHANGELOG.md SECURITY.md "out/${name}/"
+          find "out/${name}" -name '__pycache__' -prune -exec rm -rf {} +
+          # Stable zip: fixed file dates and order, no extra attributes.
+          find "out/${name}" -exec touch -h -d "$(git log -1 --format=%cI)" {} +
+          (cd out && find "${name}" -print | LC_ALL=C sort | zip -X -D -q "${name}.zip" -@)
+          cd out
+          sha256sum "${name}.zip" > SHA256SUMS
+          md5sum "${name}.zip" > MD5SUMS
+          (cd "${name}" && sha256sum dist/TwoHoursCtl.u) >> SHA256SUMS
+          cat SHA256SUMS MD5SUMS
+          echo "ZIP=out/${name}.zip" >> "$GITHUB_ENV"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ env.ZIP }}
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes="$(awk -v v="${TAG#v}" '$0 ~ "^## "v" " {on=1; next} /^## / {on=0} on' CHANGELOG.md)"
+          if ! gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes "$notes"
+          fi
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber "$ZIP" out/SHA256SUMS out/MD5SUMS
