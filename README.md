@@ -26,7 +26,7 @@ python3 install.py install <XIII>            # patch, with .orig backups
 
 XIII is a trademark of Ubisoft. This project is not affiliated with or endorsed by Ubisoft.
 
-It is the code behind the XIII servers on [2hours.gg/xiii](https://2hours.gg/xiii). The full engineering write-up: [2hours.gg/guide/xiii-server-patch](https://2hours.gg/guide/xiii-server-patch).
+It is the code behind the XIII servers on [2hours.gg/xiii](https://2hours.gg/xiii). How it was fixed, step by step: [2hours.gg/guide/xiii-server-patch](https://2hours.gg/guide/xiii-server-patch).
 
 ## What this changes in your files
 
@@ -637,7 +637,7 @@ tests/                         unit tests, no game files needed
 - [Opaquit's XIII Files](https://xiii.opaquit.com/) hosts the community patch 1.4.2.1 by Arthur Muszynski. Its toolchain made compiling the add-on possible.
 - XIII is a trademark of Ubisoft. This project is not affiliated with or endorsed by Ubisoft.
 
-Hosted XIII servers with this built in: **[2hours.gg/xiii](https://2hours.gg/xiii)**. The full write-up: [2hours.gg/guide/xiii-server-patch](https://2hours.gg/guide/xiii-server-patch).
+Hosted XIII servers with this built in: **[2hours.gg/xiii](https://2hours.gg/xiii)**. How it was fixed, step by step: [2hours.gg/guide/xiii-server-patch](https://2hours.gg/guide/xiii-server-patch).
 
 ## License
 
