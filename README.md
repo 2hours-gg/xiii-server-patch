@@ -19,7 +19,7 @@ The stock **XIII (2003)** dedicated server cannot change map while it runs, has 
 **Quick start** (needs Python 3.8 or newer, and the community XIII server 829 with its 2018 update):
 
 ```
-sha256sum -c SHA256SUMS                      # the release files are intact
+sha256sum -c --ignore-missing SHA256SUMS     # the zip is intact
 python3 install.py check   <XIII>            # what would change; changes nothing
 python3 install.py install <XIII>            # patch, with .orig backups
 ```
@@ -61,9 +61,11 @@ Extract the first one, then extract the update over it. The [binary reference](#
 Download `xiii-server-patch-v1.0.0.zip`, `SHA256SUMS` and `MD5SUMS` from the [latest release](https://github.com/2hours-gg/xiii-server-patch/releases/latest). Then check the zip is the one GitHub Actions built from this repository:
 
 ```
-sha256sum -c SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
 gh attestation verify xiii-server-patch-v1.0.0.zip -R 2hours-gg/xiii-server-patch
 ```
+
+`SHA256SUMS` also lists the add-on, `dist/TwoHoursCtl.u`. Run the same `sha256sum -c SHA256SUMS` inside the unzipped folder to check it, or rebuild it yourself and compare (see [Build it yourself](#build-it-yourself)). On macOS, use `shasum -a 256` in place of `sha256sum`.
 
 On Windows, `certutil -hashfile xiii-server-patch-v1.0.0.zip SHA256` prints the hash to compare with `SHA256SUMS`. `gh` is the [GitHub CLI](https://cli.github.com/).
 
@@ -200,7 +202,7 @@ Then copy `dist/TwoHoursCtl.u` into `<XIII>/System/` and add the `XIII.ini` line
   ```
 
   The check covers each class body. UnrealScript stores the `defaultproperties` block apart from the text, so that block is not covered: it holds `LeaveDelay=0.5` and `LeaveURL="MapMenu.unr"` (in `TwoHoursCtl.uc`).
-- **The release.** `sha256sum -c SHA256SUMS` and `gh attestation verify` (above) tie the zip to a commit and a workflow run of this repository. [CI](.github/workflows/ci.yml) runs the tests and the add-on check on every push.
+- **The release.** `sha256sum -c --ignore-missing SHA256SUMS` and `gh attestation verify` (above) tie the zip to a commit and a workflow run of this repository. [CI](.github/workflows/ci.yml) runs the tests and the add-on check on every push.
 - **The tests.** They run without any game file (the real files are Ubisoft's), on synthetic files with patch tables built for them:
 
   ```
