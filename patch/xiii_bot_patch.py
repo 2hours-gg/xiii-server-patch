@@ -37,88 +37,37 @@ Exit codes: 0 done (or nothing to do), 1 an unknown file, 2 a file missing.
 """
 from __future__ import annotations
 
-import hashlib
 import sys
 from pathlib import Path
 
-# (file, original sha256, patched sha256, ((offset, original, patched), ...))
-FILES = (
-    ("XIIIMP.dll",
-     "a504c2e3ccbe5fbfeb92a8b33c1caa4a5490172a2c22e77a80dbbbd3fec04a9b",
-     "58ca02dc8036b2390b655b917c9cdcf847086cadddda0026b1a8a1e6fe4ef35e",
-     ((0x3A90,
-       bytes.fromhex("8b442404a30cb3d011b801000000c20c00") + b"\x90" * 15,
-       bytes.fromhex("8b442404a30cb3d011837c2408017505e80b000000b801000000c20c00909090")),)),
-    ("XIIIMP.u",
-     "6f5f07f13b5fadd61abfaf9622e8dd15f91675f36a6525d7bd14de715a2c3450",
-     "d4771d0002c4a324bfef6f8891958e2a3fb2c5d17b38294c2673493b69ac5e1e",
-     ((98449, b"\x9a", b"\x9b"),)),
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from binpatch import FilePatch, cli  # noqa: E402
+
+XIIIMP_DLL = FilePatch(
+    "XIIIMP.dll",
+    "a504c2e3ccbe5fbfeb92a8b33c1caa4a5490172a2c22e77a80dbbbd3fec04a9b",
+    "58ca02dc8036b2390b655b917c9cdcf847086cadddda0026b1a8a1e6fe4ef35e",
+    # DllMain (0x11d03a90) and its padding, up to XIIIMPInitNativePackage.
+    ((0x3A90,
+      bytes.fromhex("8b442404a30cb3d011b801000000c20c00") + b"\x90" * 15,
+      bytes.fromhex("8b442404a30cb3d011837c2408017505e80b000000b801000000c20c00909090")),),
+    size=53248,
 )
+XIIIMP_U = FilePatch(
+    "XIIIMP.u",
+    "6f5f07f13b5fadd61abfaf9622e8dd15f91675f36a6525d7bd14de715a2c3450",
+    "d4771d0002c4a324bfef6f8891958e2a3fb2c5d17b38294c2673493b69ac5e1e",
+    # XIIIMPGameInfo.StartMatch: `Level.NetMode == NM_StandAlone` -> `!=`
+    ((98449, b"\x9a", b"\x9b"),),
+    size=941397,
+)
+# Applied in this order (the DLL first: bots on an unpatched DLL crash the
+# server), reverted in the reverse order.
+PATCHES = (XIIIMP_DLL, XIIIMP_U)
 
 
-def sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def swap(data: bytes, spec, forward: bool) -> bytes:
-    name, orig, patched, edits = spec
-    want, result = (orig, patched) if forward else (patched, orig)
-    if sha256(data) != want:
-        raise ValueError(f"not the expected {name}")
-    out = bytearray(data)
-    for off, old, new in edits:
-        src, dst = (old, new) if forward else (new, old)
-        if out[off:off + len(src)] != src:
-            raise ValueError(f"unexpected bytes at {off:#x} in {name}")
-        out[off:off + len(dst)] = dst
-    if sha256(bytes(out)) != result:
-        raise ValueError(f"{name}: result hash mismatch")
-    return bytes(out)
-
-
-def state(data: bytes, spec) -> str:
-    _, orig, patched, _ = spec
-    return {orig: "original", patched: "patched"}.get(sha256(data), "unknown")
-
-
-def _write_atomic(path: Path, data: bytes) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_bytes(data)
-    tmp.replace(path)
-
-
-def main(argv: list[str]) -> int:
-    if len(argv) != 2 or argv[0] not in ("check", "apply", "revert"):
-        print(__doc__.split("Usage:")[1].split("Exit codes")[0].rstrip())
-        return 2
-    action, system = argv[0], Path(argv[1])
-    states = {}
-    for spec in FILES:
-        path = system / spec[0]
-        if not path.is_file():
-            print(f"{path}: not found")
-            return 2
-        data = path.read_bytes()
-        states[spec[0]] = state(data, spec)
-        print(f"{path}: {states[spec[0]]} (sha256 {sha256(data)})")
-    if "unknown" in states.values():
-        print("Not the known build: left untouched. Bots stay off on this server.")
-        return 1
-    # apply: DLL first, then the .u; revert: the .u first, then the DLL.
-    order = FILES if action == "apply" else tuple(reversed(FILES))
-    for spec in order:
-        path = system / spec[0]
-        current = states[spec[0]]
-        if action == "apply" and current == "original":
-            backup = system / (spec[0] + ".orig")
-            if not backup.exists():
-                backup.write_bytes(path.read_bytes())
-            _write_atomic(path, swap(path.read_bytes(), spec, forward=True))
-            print(f"{spec[0]}: patched; original kept as {backup.name}")
-        elif action == "revert" and current == "patched":
-            _write_atomic(path, swap(path.read_bytes(), spec, forward=False))
-            print(f"{spec[0]}: reverted to the original")
-    return 0
+def main(argv: list) -> int:
+    return cli(argv, PATCHES, __doc__, "Bots stay off on this server.")
 
 
 if __name__ == "__main__":
