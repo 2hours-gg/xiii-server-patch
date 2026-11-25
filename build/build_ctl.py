@@ -30,6 +30,14 @@ Run it where Wine (32-bit prefix) and 7-Zip are:
 The make log is printed; the build fails unless UCC reports success and the .u
 exists. The .u carries its own source text, so `--verify dist/TwoHoursCtl.u`
 (no Wine needed) checks a package was built from the current .uc.
+
+Reproducible: UCC gives every package a random GUID. The build replaces it
+with one derived from the sources (source_guid), so two builds of the same
+sources with the same toolchain should be byte-identical. To compare two
+builds, or a build with dist/TwoHoursCtl.u (which, up to v1.0.0, still has
+the GUID UCC drew):
+
+  python3 build/build_ctl.py --compare dist/TwoHoursCtl.u /tmp/new/TwoHoursCtl.u
 """
 from __future__ import annotations
 
@@ -43,6 +51,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import upkg  # noqa: E402
 from upkg import inject_script_text  # noqa: E402
 
 PACKAGE = "TwoHoursCtl"
@@ -76,6 +85,29 @@ def make_ini(default_ini: str, packages=EDIT_PACKAGES) -> str:
 
 def stub_texts(stub_dir: Path = HERE / "stubs") -> dict[str, str]:
     return {name: (stub_dir / f"{name}.uc").read_text() for name in IPDRV_STUBS}
+
+
+def class_sources(classes_dir: Path = HERE.parent / PACKAGE / "Classes") -> dict:
+    return {p.name: p.read_bytes() for p in sorted(classes_dir.glob("*.uc"))}
+
+
+def source_guid(classes: dict, stubs: dict, toolchain_sha256: str = PATCH_SHA256) -> bytes:
+    """The package GUID of a reproducible build: the first 16 bytes of a
+    sha256 over the toolchain pin, the class sources and the IpDrv stubs
+    (names and bytes, line endings as UCC reads them: CRLF). Pure."""
+    h = hashlib.sha256(b"TwoHoursCtl reproducible build v1\0" + toolchain_sha256.encode() + b"\0")
+    for kind, files in ((b"class", classes), (b"stub", stubs)):
+        for name in sorted(files):
+            body = files[name]
+            if isinstance(body, str):
+                body = body.encode("latin-1")
+            body = body.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+            h.update(kind + b"\0" + name.encode() + b"\0" + str(len(body)).encode() + b"\0" + body)
+    return h.digest()[:upkg.GUID_SIZE]
+
+
+def expected_guid() -> bytes:
+    return source_guid(class_sources(), stub_texts())
 
 
 def prepare(client_dir: Path, server_system: Path, work: Path) -> Path:
@@ -122,13 +154,39 @@ def verify(package: Path) -> None:
         if embedded.rstrip() != src[:src.index("defaultproperties")].rstrip():
             raise SystemExit(f"{package} was NOT built from the current {path.name}")
         print(f"{package}: {path.stem} built from the current {path.name}")
-    print(f"{package}: sha256 {hashlib.sha256(package.read_bytes()).hexdigest()}")
+    data = package.read_bytes()
+    g = upkg.guid(data)
+    kind = ("derived from the sources (reproducible build)" if g == expected_guid()
+            else "drawn by UCC (not a reproducible build)")
+    print(f"{package}: package GUID {g.hex()} {kind}")
+    print(f"{package}: sha256 {hashlib.sha256(data).hexdigest()}")
+
+
+def compare(a: Path, b: Path) -> int:
+    """0 when two packages are byte-identical, 1 when they differ only in the
+    package GUID, 2 otherwise (the differing offsets are printed)."""
+    x, y = a.read_bytes(), b.read_bytes()
+    if x == y:
+        print(f"identical: sha256 {hashlib.sha256(x).hexdigest()}")
+        return 0
+    rest = upkg.differences(x, y, ignore_guid=True)
+    if not rest:
+        print(f"identical except the package GUID ({upkg.guid(x).hex()} vs {upkg.guid(y).hex()})")
+        return 1
+    print(f"{len(rest)} differing bytes besides the GUID (sizes {len(x)} and {len(y)}):")
+    for off, p, q in rest[:40]:
+        print(f"  {off:#08x}: {p if p is None else format(p, '02x')} vs {q if q is None else format(q, '02x')}")
+    return 2
 
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--verify", type=Path, metavar="PACKAGE",
                     help="only check that PACKAGE was built from the current .uc, then exit")
+    ap.add_argument("--compare", type=Path, nargs=2, metavar=("A", "B"),
+                    help="only compare two built packages (exit 0 identical, 1 GUID only, 2 other bytes)")
+    ap.add_argument("--keep-ucc-guid", action="store_true",
+                    help="keep the random GUID UCC wrote (the build is then not reproducible)")
     ap.add_argument("--client-dir", type=Path,
                     help="Dir/ unpacked from the 1.4.2.1 patch installer")
     ap.add_argument("--server-system", type=Path,
@@ -142,6 +200,8 @@ def main(argv=None) -> None:
     if a.verify:
         verify(a.verify)
         return
+    if a.compare:
+        raise SystemExit(compare(*a.compare))
     if not (a.client_dir and a.server_system and a.work):
         ap.error("--client-dir, --server-system and --work are required to build")
     if a.patch_exe:
@@ -155,7 +215,10 @@ def main(argv=None) -> None:
     if not built.is_file():
         raise SystemExit(f"{built} was not produced")
     raw = built.read_bytes()
-    shutil.copy2(built, a.out)
+    print(f"UCC output: sha256 {hashlib.sha256(raw).hexdigest()}, GUID {upkg.guid(raw).hex()}")
+    if not a.keep_ucc_guid:
+        raw = upkg.with_guid(raw, expected_guid())
+    a.out.write_bytes(raw)
     print(f"{a.out}: sha256 {hashlib.sha256(raw).hexdigest()} ({len(raw)} bytes)")
 
 

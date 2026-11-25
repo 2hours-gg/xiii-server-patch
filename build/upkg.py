@@ -9,7 +9,8 @@ SCRATCH copy of IpDrv.u; the real IpDrv.u on a server is never touched.
 
 Layout (all little endian):
   header   tag, version u16, licensee u16, flags u32, name count/offset,
-           export count/offset, import count/offset (u32 each)
+           export count/offset, import count/offset (u32 each), then the
+           package GUID (16 bytes at offset 36) and the generations
   export   class ci, super ci, package i32, name ci, flags u32,
            serial size ci, serial offset ci (only when size > 0)
   TextBuffer data: tagged-property terminator (name ci), Pos i32, Top i32,
@@ -23,6 +24,9 @@ from dataclasses import dataclass
 
 TAG = 0x9E2A83C1
 _HEADER = struct.Struct("<IHHIIIIIII")
+# The package GUID follows the header fields (UE2, package version >= 68).
+GUID_OFFSET = _HEADER.size
+GUID_SIZE = 16
 
 
 class PackageError(Exception):
@@ -184,3 +188,40 @@ def inject_script_text(data: bytes, texts: dict[str, str]) -> bytes:
     header[7] = table_off
     _HEADER.pack_into(out, 0, *header)
     return bytes(out)
+
+
+# Reproducible builds. `UCC make` gives every package it saves a fresh random
+# GUID (a version 4 UUID from the Windows GUID generator: every TwoHoursCtl.u
+# built so far has a different one, with the version nibble 4 and the
+# variant bits 10). It is the only part of the file known to change from one
+# build of the same sources to the next. The engine uses a package GUID to
+# match a client's copy of a package to the server's (ServerPackages), and
+# TwoHoursCtl.u is never sent to clients, so build_ctl.py replaces it with
+# one derived from the sources.
+
+def guid(data: bytes) -> bytes:
+    pkg = Package(data)
+    if pkg.version < 68:
+        raise PackageError("package version has no GUID in its header")
+    return pkg.data[GUID_OFFSET:GUID_OFFSET + GUID_SIZE]
+
+
+def with_guid(data: bytes, new_guid: bytes) -> bytes:
+    """A copy of `data` with its package GUID replaced. Pure."""
+    if len(new_guid) != GUID_SIZE:
+        raise ValueError("a GUID is 16 bytes")
+    guid(data)  # checks the header
+    out = bytearray(data)
+    out[GUID_OFFSET:GUID_OFFSET + GUID_SIZE] = new_guid
+    return bytes(out)
+
+
+def differences(a: bytes, b: bytes, ignore_guid: bool = False) -> list:
+    """[(offset, a byte, b byte)] where two packages differ, plus
+    (min length, None, None) when the lengths differ."""
+    if ignore_guid:
+        a, b = with_guid(a, bytes(GUID_SIZE)), with_guid(b, bytes(GUID_SIZE))
+    out = [(i, x, y) for i, (x, y) in enumerate(zip(a, b)) if x != y]
+    if len(a) != len(b):
+        out.append((min(len(a), len(b)), None, None))
+    return out

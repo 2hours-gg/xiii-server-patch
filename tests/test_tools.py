@@ -27,6 +27,47 @@ class AddonPackageTest(unittest.TestCase):
             self.assertEqual(upkg.read_ci(enc, 0), (v, len(enc)), v)
 
 
+class ReproducibleBuildTest(unittest.TestCase):
+    def setUp(self):
+        self.dist = (ROOT / "dist" / "TwoHoursCtl.u").read_bytes()
+
+    def test_guid_is_the_only_change(self):
+        g = build_ctl.expected_guid()
+        out = upkg.with_guid(self.dist, g)
+        self.assertEqual(upkg.guid(out), g)
+        diff = upkg.differences(self.dist, out)
+        self.assertTrue(diff)
+        self.assertTrue(all(upkg.GUID_OFFSET <= off < upkg.GUID_OFFSET + 16 for off, _, _ in diff))
+        self.assertEqual(upkg.differences(self.dist, out, ignore_guid=True), [])
+        pkg = upkg.Package(out)   # still a readable package
+        self.assertIn("TwoHoursCtl", pkg.names)
+
+    def test_source_guid_depends_on_every_input(self):
+        classes = {"A.uc": b"class A;\r\n", "B.uc": b"class B;\n"}
+        stubs = {"UdpLink": "class UdpLink;"}
+        g = build_ctl.source_guid(classes, stubs)
+        self.assertEqual(len(g), 16)
+        self.assertEqual(g, build_ctl.source_guid(dict(reversed(list(classes.items()))), stubs))
+        # LF and CRLF read the same (UCC reads CRLF)
+        self.assertEqual(g, build_ctl.source_guid({"A.uc": b"class A;\n", "B.uc": b"class B;\r\n"}, stubs))
+        self.assertNotEqual(g, build_ctl.source_guid({**classes, "B.uc": b"class B2;\n"}, stubs))
+        self.assertNotEqual(g, build_ctl.source_guid(classes, {"UdpLink": "class UdpLink2;"}))
+        self.assertNotEqual(g, build_ctl.source_guid(classes, stubs, toolchain_sha256="0" * 64))
+
+    def test_compare_exit_codes(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            a, b, c = Path(d, "a.u"), Path(d, "b.u"), Path(d, "c.u")
+            a.write_bytes(self.dist)
+            b.write_bytes(upkg.with_guid(self.dist, bytes(16)))
+            c.write_bytes(self.dist[:-1] + bytes([self.dist[-1] ^ 1]))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(build_ctl.compare(a, a), 0)
+                self.assertEqual(build_ctl.compare(a, b), 1)
+                self.assertEqual(build_ctl.compare(a, c), 2)
+
+
 class CtlClientTest(unittest.TestCase):
     def test_tell_puts_a_tab_after_the_name(self):
         self.assertEqual(xiii_ctl.build_command(["tell", "Boss", "hello", "there"]),
