@@ -5,7 +5,8 @@ Run it ON the server machine (the actor ignores datagrams that are not from
 127.0.0.1). The key is the CtlKey set in XIII.ini [TwoHoursCtl.TwoHoursCtl].
 
   python3 xiii_ctl.py --key <CtlKey> status
-  python3 xiii_ctl.py --key <CtlKey> travel "DM_Amos.unr?MapName=FBI?NP=12?FF=0?FR=40?TI=20?Game=XIIIMP.XIIIMPGameInfo?GameIdx=0?Mutator="
+  python3 xiii_ctl.py --key <CtlKey> players
+  python3 xiii_ctl.py --key <CtlKey> travel 4 "DM_Amos.unr?MapName=FBI?NP=12?FF=0?FR=40?TI=20?Game=XIIIMP.XIIIMPGameInfo?GameIdx=0?Mutator="
   python3 xiii_ctl.py --key <CtlKey> say "map change in 10 seconds"
   python3 xiii_ctl.py --key <CtlKey> kick SomePlayer
   python3 xiii_ctl.py --key <CtlKey> ban SomePlayer
@@ -13,12 +14,19 @@ Run it ON the server machine (the actor ignores datagrams that are not from
   python3 xiii_ctl.py --key <CtlKey> poll
   python3 xiii_ctl.py --key <CtlKey> bots 6 2
 
+`players` replies one line, counts only: "ok humans=<n> bots=<n> max=<n>
+map=<map>". `travel [<wait>] <url>` changes map. With players connected, pass
+a wait (4 seconds is what 2hours.gg uses): each player is sent the new map,
+then the menu map, and the switch runs once they all left (at most <wait>
+seconds), so they reconnect to the new map and stay. Without a wait a real
+XIII client drops to its menu about 5 seconds after the change. A travel
+while another one is running replies "error a map change is already running".
 `tell` sends "tell <name><TAB><text>", so a name may hold spaces. `poll` prints
 the chat commands queued since the last poll, one "<name><TAB><a|p><TAB><command>"
 line each (a = admin, p = player), plus "<TAB>s<TAB>#matchend" when a match
-ends, and empties the queue. `bots <n> <skill>` makes bots fill the server to n
-players (0 = off) at skill 0-3, from the next match start; it needs
-patch/xiii_bot_patch.py.
+ends, and empties the queue. `bots <n> <skill>` asks for n bots (0 = off, at most 8;
+players never count toward n) at skill 0-3, from the next match start; it
+needs patch/xiii_bot_patch.py.
 
 Wire format, one UDP datagram each way:
   request  "<key> <id> <command> [args]"
@@ -57,11 +65,11 @@ def build_command(words: list) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="TwoHoursCtl client (status, travel, say, kick, ban, tell, poll, bots)")
+        description="TwoHoursCtl client (status, players, travel, say, kick, ban, tell, poll, bots)")
     ap.add_argument("--key", required=True, help="CtlKey from XIII.ini")
     ap.add_argument("--port", type=int, default=7098, help="CtlPort (default 7098)")
     ap.add_argument("command", nargs="+",
-                    help="status | travel <url> | say <text> | kick <name> | ban <name> | "
+                    help="status | players | travel [<wait>] <url> | say <text> | kick <name> | ban <name> | "
                          "tell <name> <text> | poll | bots <n> <skill>")
     a = ap.parse_args()
     try:

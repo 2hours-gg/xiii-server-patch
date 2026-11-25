@@ -20,9 +20,18 @@ ReadInt(MAX_CHANNELS), [ChSequence = ReadInt(MAX_CHSEQUENCE)], [ChType =
 ReadInt(CHTYPE_MAX)], BunchDataBits = ReadInt(MaxPacket*8), data. Control
 channel data = FStrings (compact-index length, ANSI bytes with NUL).
 
-Usage (on the server host):
+It can also FOLLOW travels like a game client (--follow MAP[,MAP...]): when
+the server's travel to the next listed map arrives, it opens a new connection
+to the same address with the merged URL (that map + its own options), sending
+HELLO every second until the server answers (a restarting server answers when
+it is back: the client's InitialConnectTimeout is 60 s). Each follow prints
+"followed to MAP: Join sent N s after the travel". Detection is the same bit
+search as --watch, so list maps in the order the test changes to them.
+
+Usage (on the server host or the LAN):
   python3 xiii_netclient.py --server 127.0.0.1:7777 --name labclient \\
-      [--password <admin pw>] [--seconds 120] [--watch DM_Banque]
+      [--password <admin pw>] [--seconds 120] [--watch DM_Banque] \\
+      [--follow DM_Banque,CTF_Base,DM_Amos]
 """
 from __future__ import annotations
 
@@ -269,6 +278,44 @@ class Client:
         return hits
 
 
+def follow_url(login_url: str, map_file: str) -> str:
+    """The URL a client logs in with after a relative travel to `map_file`:
+    the new map, the player's own options kept. Pure."""
+    m = map_file if map_file.lower().endswith(".unr") else f"{map_file}.unr"
+    q = login_url.find("?")
+    return m + (login_url[q:] if q >= 0 else "")
+
+
+def connect(server, url: str, *, ver: int, minver: int, retry_s: float = 0.0, log=print):
+    """HELLO (resent each second for up to retry_s), LOGIN, JOIN. Returns the
+    joined Client or None."""
+    deadline = time.time() + retry_s
+    while True:
+        c = Client(server, log=log)
+        c.control_bunch(f"HELLO REVISION=0 MINVER={minver or ver} VER={ver}", open_=True)
+        got = c.pump(1 if retry_s else 3)
+        challenge = next((t for t in got if t.startswith("CHALLENGE")), None)
+        if any(t.startswith("UPGRADE") for t in got):
+            print("server wants another version:", [t for t in got if t.startswith("UPGRADE")])
+            return None
+        if challenge:
+            break
+        c.sock.close()
+        if time.time() >= deadline:
+            print("no CHALLENGE from the server")
+            return None
+    c.control_bunch("NETSPEED 10000")
+    value = int(challenge.split("CHALLENGE=")[1].split()[0])
+    c.control_bunch(f"LOGIN RESPONSE={challenge_response(value)} URL={url}?Checksum=NoChecksum")
+    got = c.pump(3)
+    if not any(t.startswith("WELCOME") for t in got):
+        print("no WELCOME from the server")
+        return None
+    c.pump(1)
+    c.control_bunch("JOIN")
+    return c
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--server", default="127.0.0.1:7777")
@@ -279,31 +326,21 @@ def main(argv=None):
     ap.add_argument("--seconds", type=float, default=60)
     ap.add_argument("--watch", default="", help="report bunches whose bits hold this text")
     ap.add_argument("--dump", default="", help="at the end, print every bunch holding this text")
+    ap.add_argument("--follow", default="", help="follow travels to these maps, in order (comma list)")
+    ap.add_argument("--retry", type=float, default=60.0,
+                    help="seconds a follow keeps sending HELLO (the client's InitialConnectTimeout)")
     a = ap.parse_args(argv)
     host, port = a.server.rsplit(":", 1)
-    c = Client((host, int(port)))
-    c.control_bunch(f"HELLO REVISION=0 MINVER={a.minver or a.ver} VER={a.ver}", open_=True)
-    got = c.pump(3)
-    if any(t.startswith("UPGRADE") for t in got):
-        print("server wants another version:", [t for t in got if t.startswith("UPGRADE")])
-        return 2
-    challenge = next((t for t in got if t.startswith("CHALLENGE")), None)
-    if not challenge:
-        print("no CHALLENGE from the server")
-        return 1
+    server = (host, int(port))
     url = f"Index.unr?Name={a.name}?Team=255?Class=XIII.XIIIPlayerPawn"
     if a.password:
         url += f"?Password={a.password}"
-    c.control_bunch("NETSPEED 10000")
-    value = int(challenge.split("CHALLENGE=")[1].split()[0])
-    c.control_bunch(f"LOGIN RESPONSE={challenge_response(value)} URL={url}?Checksum=NoChecksum")
-    got = c.pump(3)
-    if not any(t.startswith("WELCOME") for t in got):
-        print("no WELCOME from the server")
+    c = connect(server, url, ver=a.ver, minver=a.minver)
+    if c is None:
         return 1
-    c.pump(1)
-    c.control_bunch("JOIN")
     print("joined; holding the connection", flush=True)
+    follows = [m.strip() for m in a.follow.split(",") if m.strip()]
+    history = []   # packets of the connections a follow closed (for --dump)
     start = time.time()
     while time.time() - start < a.seconds:
         c.pump(1)
@@ -313,8 +350,23 @@ def main(argv=None):
                 print(f"server sent '{a.watch}' on channel(s) {sorted({h[1] for h in hits})} "
                       f"{time.time() - start:.1f}s after JOIN", flush=True)
                 a.watch = ""
+        if follows and c.find_text(follows[0].encode()):
+            target = follows.pop(0)
+            seen = time.time()
+            print(f"travel to {target} received {seen - start:.1f}s after JOIN; following",
+                  flush=True)
+            c.sock.close()
+            history += c.raw
+            url = follow_url(url, target)
+            nxt = connect(server, url, ver=a.ver, minver=a.minver, retry_s=a.retry)
+            if nxt is None:
+                print(f"follow to {target} FAILED", flush=True)
+                return 1
+            c = nxt
+            print(f"followed to {target}: Join sent {time.time() - seen:.1f}s after the travel",
+                  flush=True)
     if a.dump:
-        for t, ch, b_open, b_close, bits in c.raw:
+        for t, ch, b_open, b_close, bits in history + c.raw:
             for off in range(8):
                 blob = bits_to_bytes(bits, off)
                 if a.dump.encode() in blob:

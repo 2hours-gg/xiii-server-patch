@@ -9,7 +9,7 @@ The stock XIII server cannot change map while it runs. It has no remote console.
 | [`patch/xiii_engine_patch.py`](patch/xiii_engine_patch.py) | Patches `Engine.dll` so a map change no longer crashes the server | 7 bytes changed |
 | [`patch/xiii_clienttravel_patch.py`](patch/xiii_clienttravel_patch.py) | Patches `Engine.u` so players connected during a map change are told to follow it, instead of crashing the server | 1 byte changed |
 | [`patch/xiii_bot_patch.py`](patch/xiii_bot_patch.py) | Patches `XIIIMP.u` and `XIIIMP.dll` so the dedicated server can run bots | 1 byte + 32 bytes |
-| [`TwoHoursCtl/`](TwoHoursCtl/Classes/) | A small server add-on in UnrealScript. It accepts local commands (`status`, `travel`, `say`, `kick`, `ban`, `tell`, `poll`, `bots`), catches chat commands such as `!map DM_Banque` or `!vote DM_Pal`, and reports the end of each match | 25 KB `.u` |
+| [`TwoHoursCtl/`](TwoHoursCtl/Classes/) | A small server add-on in UnrealScript. It accepts local commands (`status`, `players`, `travel`, `say`, `kick`, `ban`, `tell`, `poll`, `bots`), catches chat commands such as `!map DM_Banque` or `!vote DM_Pal`, and reports the end of each match | 39 KB `.u` |
 | [`tools/xiii_ctl.py`](tools/xiii_ctl.py) | A command-line client for the add-on | |
 | [`tools/xiii_netclient.py`](tools/xiii_netclient.py) | A minimal XIII network client for tests: it joins a server over UDP like a player | |
 | [`build/`](build/) | How the add-on is compiled, since the server files cannot compile UnrealScript | |
@@ -186,7 +186,7 @@ The commands 2hours.gg runs (any case, map names in any case):
 | `!maps [mode]`, `!modes`, `!players` | Lists, sent privately |
 | `!kick <name>`, `!ban <name>` | Kick, or kick and ban the IP |
 | `!next`, `!rotation on\|off` | Skip to the next map, turn the rotation on or off |
-| `!bots <n> [skill]` | Bots fill the server to n players |
+| `!bots <n> [skill]` | Play with n bots (players do not count) |
 | `!vote <map>`, `!vote <mode> <map>`, `!votes`, `!rotation` | Everyone: vote, show the votes, show the rotation |
 | `!help` | The list above |
 
@@ -250,8 +250,9 @@ python3 patch/xiii_bot_patch.py apply  <XIII>/System
 
 Then `bots <n> <skill>` (or `BotTarget`/`BotSkill` in `[TwoHoursCtl.TwoHoursCtl]`) sets `Level.BotNumber`, `Level.IdealPlayerCount`, `Level.BotLevel` and `Level.BotTeam`:
 
-- Bots fill the server to n players (XIII adds at most 8) at the next match start, which needs one human. Skill goes from 0 to 3.
-- While players plus bots are more than n, one bot leaves every second. `bots 0` removes them all.
+- n is the number of bots. Players never count toward it. XIII has 8 bot slots, so 8 is the most. Skill goes from 0 to 3.
+- Bots join at the next match start, which needs one human. A match starts with n bots, or fewer when the seats run out.
+- One bot leaves every second while there are more than n bots, or while players plus bots are over the server's max players. So a player can always take a bot's seat. `bots 0` removes them all.
 - The setting is saved in `XIII.ini`, so it survives map changes and restarts.
 
 Tested on a lab server: 3 bots played whole matches in all 6 modes, the next match started with them again, and the server stayed up for 10 minutes with no error. How they feel against real players is not tested yet.
@@ -275,7 +276,7 @@ All hashes are sha256.
 | `System/XIIIMP.u` (patched) | 941397 | `d4771d0002c4a324bfef6f8891958e2a3fb2c5d17b38294c2673493b69ac5e1e` | |
 | `System/XIIIMP.dll` (original) | 53248 | `a504c2e3ccbe5fbfeb92a8b33c1caa4a5490172a2c22e77a80dbbbd3fec04a9b` | Image base `0x11D00000` |
 | `System/XIIIMP.dll` (patched) | 53248 | `58ca02dc8036b2390b655b917c9cdcf847086cadddda0026b1a8a1e6fe4ef35e` | |
-| `dist/TwoHoursCtl.u` | 25615 | `65dafa6384134f4e1b94aee878fdcb87481f0a6415f661b1e90e558d61609dfc` | Built from `TwoHoursCtl/Classes/TwoHoursCtl.uc` and `TwoHoursChat.uc` |
+| `dist/TwoHoursCtl.u` | 39087 | `3f4e692915cc1abdd69104afce7f45b6be1dbde19b60f703b6be1f430735647f` | Built from `TwoHoursCtl/Classes/TwoHoursCtl.uc`, `TwoHoursChat.uc` and `TwoHoursLogin.uc` |
 | `Classic_XIII___Patch_by_Arthur_v1.4.2.1_2019-09-04.exe` | | `4cd267d92353ffd99894d65794fc8f50b8a387476b2cac3dfd42d2f78866d0c7` | Build-time only (compiler toolchain) |
 
 In `Engine.dll`, the `.text` section has the same file offset and virtual address (`0x1000`). So a file offset `X` in the code is the address `0x10300000 + X` in a debugger.
@@ -472,9 +473,9 @@ Reports from real games are welcome as issues.
 patch/xiii_engine_patch.py     check / apply / revert the 7-byte Engine.dll patch
 patch/xiii_bot_patch.py        check / apply / revert the bot patches (XIIIMP.u, XIIIMP.dll)
 patch/xiii_clienttravel_patch.py  check / apply / revert the 1-byte Engine.u patch (live changes with players)
-TwoHoursCtl/Classes/           the add-on source (UnrealScript): TwoHoursCtl, TwoHoursChat
+TwoHoursCtl/Classes/           the add-on source (UnrealScript): TwoHoursCtl, TwoHoursChat, TwoHoursLogin
 dist/TwoHoursCtl.u             the compiled add-on
-tools/xiii_ctl.py              command-line client (status, travel, say, kick, ban, tell, poll, bots)
+tools/xiii_ctl.py              command-line client (status, players, travel, say, kick, ban, tell, poll, bots)
 tools/xiii_netclient.py        minimal XIII network client for tests
 build/build_ctl.py             compiles the add-on with UCC under Wine
 build/upkg.py                  minimal UE2 package reader/writer
