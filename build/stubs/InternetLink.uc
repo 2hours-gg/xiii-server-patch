@@ -1,6 +1,6 @@
 //=============================================================================
 // InternetLink: declaration-only stand-in for XIII's stripped IpDrv.InternetLink.
-// Build-time only (build/build_ctl.py injects it into a scratch copy
+// Build-time only (build_ctl.py injects it into a scratch copy
 // of IpDrv.u so UCC make can parse the superclass chain). Members and order
 // match the compiled class in the shipped IpDrv.u; never shipped to a server.
 //=============================================================================

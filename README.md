@@ -12,9 +12,19 @@ The stock **XIII (2003)** dedicated server cannot change map while it runs, has 
 
 - Four tiny binary patches: 28 bytes differ in total, all listed below with their offsets. Each patch touches only the exact known file. Its sha256 is checked before and after, and any other file is left alone.
 - Every original is kept as `<file>.orig`. `install.py uninstall` puts them back.
-- The add-on `TwoHoursCtl.u` carries its own source text. One command checks it was built from the `.uc` files in this repository.
+- The add-on `TwoHoursCtl.u` carries its own source text. One command checks it was built from the `.uc` files in this repository, and the build is reproducible: build it yourself and you get the same sha256 as the release.
 - Releases come with `SHA256SUMS` and a signed build provenance attestation from GitHub Actions.
 - No Ubisoft files are in this repository. Plain Python 3.8+, standard library only. MIT license.
+
+**Quick start** (needs Python 3.8 or newer, and the community XIII server 829 with its 2018 update):
+
+```
+sha256sum -c SHA256SUMS                      # the release files are intact
+python3 install.py check   <XIII>            # what would change; changes nothing
+python3 install.py install <XIII>            # patch, with .orig backups
+```
+
+XIII is a trademark of Ubisoft. This project is not affiliated with or endorsed by Ubisoft.
 
 It is the code behind the XIII servers on [2hours.gg/xiii](https://2hours.gg/xiii). The full engineering write-up: [2hours.gg/guide/xiii-server-engineering](https://2hours.gg/guide/xiii-server-engineering).
 
@@ -28,7 +38,7 @@ All in `<XIII>/System`. Sizes in bytes, hashes are sha256.
 | `Engine.u` (547891) | `da24040b4fca0d3ec6dd92aa3b192d3ee82b25fa358170bbeded4d8432683234` | `019296366fe36805fbf2721cb09c365dd117d42ad05a6128f2444aa21a4af7f6` | 1 | Connected players are told to follow a map change |
 | `XIIIMP.dll` (53248) | `a504c2e3ccbe5fbfeb92a8b33c1caa4a5490172a2c22e77a80dbbbd3fec04a9b` | `58ca02dc8036b2390b655b917c9cdcf847086cadddda0026b1a8a1e6fe4ef35e` | 20 (in 32 rewritten) | Bots no longer crash the server |
 | `XIIIMP.u` (941397) | `6f5f07f13b5fadd61abfaf9622e8dd15f91675f36a6525d7bd14de715a2c3450` | `d4771d0002c4a324bfef6f8891958e2a3fb2c5d17b38294c2673493b69ac5e1e` | 1 | The dedicated server adds bots |
-| `TwoHoursCtl.u` (39087) | new file | `3f4e692915cc1abdd69104afce7f45b6be1dbde19b60f703b6be1f430735647f` | | The add-on: control port, chat commands, bots |
+| `TwoHoursCtl.u` (39046) | new file | `07a89bdba247df37fbf439038be83175560f5c8aa4c072cd5d8bae91fda4cedf` | | The add-on: control port, chat commands, bots |
 | `XIII.ini` | | | 1 line + 1 section | Loads the add-on, see [below](#what-install-writes-in-xiiiini) |
 
 "Bytes that differ" is what `cmp -l original patched | wc -l` prints. Clients are not changed: players keep their own files.
@@ -214,11 +224,11 @@ python3 build/build_ctl.py --compare dist/TwoHoursCtl.u /tmp/TwoHoursCtl.u
 
 `WINEPREFIX` defaults to `/wine`. Set it to your 32-bit prefix.
 
-**Reproducibility.** `UCC make` writes a random GUID into every package header: each `TwoHoursCtl.u` built so far has a different one, a version 4 UUID. `build_ctl.py` replaces it with one derived from the sources and the toolchain, so two builds of the same sources should be byte-identical. The add-on is never sent to clients, so the GUID only needs to be stable.
+**Reproducibility.** `UCC make` writes a random GUID into every package header: each `TwoHoursCtl.u` built so far has a different one, a version 4 UUID. `build_ctl.py` replaces it with one derived from the sources and the toolchain, so two builds of the same sources are byte-identical. The add-on is never sent to clients, so the GUID only needs to be stable.
 
 - `--compare` exits 0 for identical files, 1 when only the GUID differs, 2 otherwise (and lists the bytes).
-- `dist/TwoHoursCtl.u` in v1.0.0 is the build the 2hours.gg servers run. It still has the GUID UCC drew, so a rebuild compares as "identical except the package GUID" (exit 1). Releases after v1.0.0 will ship a build with the derived GUID.
-- **Not proven yet:** that two Wine builds of the same sources differ only in the GUID. To check it, build twice into two `--work` folders with `--keep-ucc-guid`, then `--compare` the two outputs: exit 1 proves it. Reports are welcome as issues.
+- `dist/TwoHoursCtl.u` is a build with the derived GUID, so a rebuild of the same sources with the same toolchain compares as identical (exit 0). It is also the build the 2hours.gg servers run.
+- Proven on a Linux test server (Wine, 2026-11-25): two builds from clean `--work` folders both gave sha256 `07a89bdba247df37fbf439038be83175560f5c8aa4c072cd5d8bae91fda4cedf`. Two builds with `--keep-ucc-guid` compared as "identical except the package GUID" (exit 1).
 
 CI cannot compile the add-on (no Wine, and the patch installer is not redistributed here). A release therefore ships the committed `dist/TwoHoursCtl.u`, and CI checks it with `--verify`.
 
@@ -367,7 +377,7 @@ All hashes are sha256.
 | `System/XIIIMP.u` (patched) | 941397 | `d4771d0002c4a324bfef6f8891958e2a3fb2c5d17b38294c2673493b69ac5e1e` | |
 | `System/XIIIMP.dll` (original) | 53248 | `a504c2e3ccbe5fbfeb92a8b33c1caa4a5490172a2c22e77a80dbbbd3fec04a9b` | Image base `0x11D00000` |
 | `System/XIIIMP.dll` (patched) | 53248 | `58ca02dc8036b2390b655b917c9cdcf847086cadddda0026b1a8a1e6fe4ef35e` | |
-| `dist/TwoHoursCtl.u` | 39087 | `3f4e692915cc1abdd69104afce7f45b6be1dbde19b60f703b6be1f430735647f` | Built from `TwoHoursCtl/Classes/TwoHoursCtl.uc`, `TwoHoursChat.uc` and `TwoHoursLogin.uc` |
+| `dist/TwoHoursCtl.u` | 39046 | `07a89bdba247df37fbf439038be83175560f5c8aa4c072cd5d8bae91fda4cedf` | Built from `TwoHoursCtl/Classes/TwoHoursCtl.uc`, `TwoHoursChat.uc` and `TwoHoursLogin.uc` |
 | `Classic_XIII___Patch_by_Arthur_v1.4.2.1_2019-09-04.exe` | | `4cd267d92353ffd99894d65794fc8f50b8a387476b2cac3dfd42d2f78866d0c7` | Build-time only (compiler toolchain) |
 
 In `Engine.dll`, the `.text` section has the same file offset and virtual address (`0x1000`). So a file offset `X` in the code is the address `0x10300000 + X` in a debugger.
@@ -597,7 +607,7 @@ On a cloud server on 2026-11-25:
 | Bots on the dedicated server in all 6 modes, `bots 0`, the count surviving a map change | Tested |
 | `say` showing in a player's chat, `kick` removing a player | **Not yet tested** |
 | Bots against real players, a bot leaving when a player joins a full server | **Not yet tested** |
-| Two Wine builds of the add-on identical apart from the GUID | **Not yet tested** |
+| Two Wine builds of the add-on byte-identical (derived GUID), and identical apart from the GUID with `--keep-ucc-guid` | Tested |
 
 Reports from real games are welcome as issues. Security reports: see [SECURITY.md](SECURITY.md).
 

@@ -31,8 +31,12 @@ class ReproducibleBuildTest(unittest.TestCase):
     def setUp(self):
         self.dist = (ROOT / "dist" / "TwoHoursCtl.u").read_bytes()
 
+    def test_dist_is_a_reproducible_build(self):
+        self.assertEqual(upkg.guid(self.dist), build_ctl.expected_guid(),
+                         "dist/TwoHoursCtl.u does not carry the GUID derived from the sources")
+
     def test_guid_is_the_only_change(self):
-        g = build_ctl.expected_guid()
+        g = bytes(16)
         out = upkg.with_guid(self.dist, g)
         self.assertEqual(upkg.guid(out), g)
         diff = upkg.differences(self.dist, out)

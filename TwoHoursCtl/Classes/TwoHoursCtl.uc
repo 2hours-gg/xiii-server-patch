@@ -30,7 +30,7 @@
 //                     "<name>\t<a|p|s>\t<command>" line each (TwoHoursChat),
 //                     then clears; "\ts\t#matchend" when a match ends
 //   bots <n> <skill>  n bots (0 = none, at most 8), skill 0-3; players never
-//                     count toward n (owner rule 2026-11-19). Saved in
+//                     count toward n (by design). Saved in
 //                     XIII.ini, applied at every match start
 //   labhold on|off    LAB ONLY (LabInject=True): keep a throwaway player
 //                     controller on the server so a match starts without a
@@ -128,8 +128,8 @@ function WatchMatch()
 // Level.IdealPlayerCount minus the humans) when no bot exists yet. Stock XIII
 // does that only offline (NM_StandAlone); lib/botpatch.py lets a dedicated
 // server do it too.
-// BotTarget is the number of BOTS, players never count toward it (owner rule
-// 2026-11-19): the cap is the server's seats, so a match starts with
+// BotTarget is the number of BOTS, players never count toward it (by
+// design): the cap is the server's seats, so a match starts with
 // Min(BotTarget, MaxPlayers - humans) bots. LevelInfo has 8 bot slots
 // (BotLevel[8]), so 8 is the most. Run every second too: Level.Game may not
 // exist yet at PostBeginPlay.
@@ -318,7 +318,7 @@ function string NextWord(out string S)
 // ProcessServerTravel does), relative, so their own options (name, password)
 // stay and the server's session options (?Game= ?NP= ?GS= ...) stay on the
 // server. ?GS= in a follower's URL made XIIIMP's Login start a Ubi.com match
-// for them ("Unable to join my own room", owner test 2026-11-21). Then the
+// for them ("Unable to join my own room", real client, 2026-11-21). Then the
 // same switch ServerTravel arms: NextURL, which the engine loads when
 // NextSwitchCountdown runs out.
 //
@@ -520,7 +520,7 @@ function string StatusText()
 	return S;
 }
 
-// Humans and bots apart (owner rule: bots are not players), no names, so the
+// Humans and bots apart (bots are not players), no names, so the
 // reply stays one short line whatever the players are called.
 function string PlayersText()
 {

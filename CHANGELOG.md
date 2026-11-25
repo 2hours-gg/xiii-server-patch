@@ -8,10 +8,11 @@ First release.
 
 - `install.py`: `check`, `install` and `uninstall` for all patches, the add-on and the `XIII.ini` lines, with `--dry-run`, `.orig` backups and refusal of unknown files.
 - Tests that run without game files, CI on Linux and Windows, and tag releases with `SHA256SUMS`, `MD5SUMS` and a signed build provenance attestation.
-- Reproducible add-on builds: `build_ctl.py` replaces the random package GUID that UCC writes with one derived from the sources. `--compare` compares two builds. The shipped `dist/TwoHoursCtl.u` is still the build with UCC's GUID.
+- Reproducible add-on builds: `build_ctl.py` replaces the random package GUID that UCC writes with one derived from the sources. `--compare` compares two builds. The shipped `dist/TwoHoursCtl.u` is such a build: two clean builds of the same sources gave the same bytes (2026-11-25).
+- Add-on source comments reworded as neutral statements (no code change), and the add-on rebuilt.
 - Documented: the InsideXIII master server lists the name from the URL option `?ServerName=` (not from `XIII.ini`), and a join password is `GamePassword` in `XIII.ini` plus `?IsPrivate=Y` in the URL (2026-11-25).
 
-`dist/TwoHoursCtl.u`: sha256 `3f4e692915cc1abdd69104afce7f45b6be1dbde19b60f703b6be1f430735647f`, 39087 bytes.
+`dist/TwoHoursCtl.u`: sha256 `07a89bdba247df37fbf439038be83175560f5c8aa4c072cd5d8bae91fda4cedf`, 39046 bytes.
 
 ## Before 1.0.0
 

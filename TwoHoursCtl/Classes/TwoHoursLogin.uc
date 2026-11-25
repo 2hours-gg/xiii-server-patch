@@ -3,7 +3,7 @@
 //
 // XIII's AccessControl.AdminLogin compares ?Password= with AdminPassword
 // using == (case-sensitive): ?Password=LAB joined as a plain player on a
-// server whose password is "lab" (owner, real client, 2026-11-21).
+// server whose password is "lab" (real client, 2026-11-21).
 // XIIIMPGameInfo.Login runs BaseMutator.ModifyLogin BEFORE it reads
 // ?Password=, so this mutator (put in the chain by TwoHoursCtl) rewrites a
 // password that matches in any case to the exact one. A wrong password (any

@@ -41,13 +41,14 @@ from binpatch import MISSING, ORIGINAL, PATCHED, UNKNOWN, FilePatch, sha256  # n
 ADDON_FILE = "TwoHoursCtl.u"
 # dist/TwoHoursCtl.u of this release. install refuses a dist file that does
 # not match (a broken download), so this pin and the README must agree.
-ADDON_SHA256 = "3f4e692915cc1abdd69104afce7f45b6be1dbde19b60f703b6be1f430735647f"
-# Earlier builds of TwoHoursCtl.u (the repository's first three versions):
+ADDON_SHA256 = "07a89bdba247df37fbf439038be83175560f5c8aa4c072cd5d8bae91fda4cedf"
+# Earlier builds of TwoHoursCtl.u (published in this repository before v1.0.0):
 # install replaces them, uninstall removes them.
 OLD_ADDON_SHA256 = (
     "65dafa6384134f4e1b94aee878fdcb87481f0a6415f661b1e90e558d61609dfc",
     "b8973532b6d315d40f78ca6b29634f8a7ffda9ef2ba500454bfe1a3ca1f76fd8",
     "876506e6211751f39a549f8b144fe50e8763e7a3db634d4361e440087ec57089",
+    "3f4e692915cc1abdd69104afce7f45b6be1dbde19b60f703b6be1f430735647f",
 )
 
 INI_FILE = "XIII.ini"
